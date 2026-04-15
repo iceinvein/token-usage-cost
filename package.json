@@ -1,0 +1,38 @@
+{
+  "name": "claude-cost",
+  "version": "0.1.0",
+  "description": "Local AI coding usage and estimated cost tracker",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "sync": "bun run src/cli.ts sync",
+    "today": "bun run src/cli.ts today",
+    "week": "bun run src/cli.ts week",
+    "month": "bun run src/cli.ts month",
+    "projects": "bun run src/cli.ts projects",
+    "models": "bun run src/cli.ts models",
+    "daily": "bun run src/cli.ts daily",
+    "dashboard": "bun run src/cli.ts dashboard",
+    "dashboard:plain": "bun run src/cli.ts dashboard --plain",
+    "export": "bun run src/cli.ts export",
+    "check": "tsc --noEmit"
+  },
+  "keywords": [
+    "bun",
+    "cli",
+    "tokens",
+    "cost-tracking"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "commander": "^14.0.1",
+    "ink": "^7.0.0",
+    "react": "^19.2.5",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^6.0.2"
+  }
+}
