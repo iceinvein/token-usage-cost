@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 
 import {
@@ -42,6 +42,12 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+function formatCompactNumber(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return formatNumber(value);
+}
+
 function formatSourceLabel(source: DashboardSourceId): string {
   switch (source) {
     case "claude-code":
@@ -72,10 +78,12 @@ function formatSourceFilterLabel(source: DashboardSourceFilter): string {
   return formatSourceLabel(source);
 }
 
-function spark(value: number, max: number, width = 18): string {
-  if (max <= 0) return ".".repeat(width);
-  const filled = Math.max(0, Math.min(width, Math.round((value / max) * width)));
-  return `${"#".repeat(filled)}${".".repeat(width - filled)}`;
+function fillWidth(value: number, total: number, width: number): number {
+  if (total <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(width, Math.round((value / total) * width)));
 }
 
 function MetricCard(props: { label: string; value: string; detail: string; color?: string }) {
@@ -97,7 +105,7 @@ function Section(props: { title: string; children: React.ReactNode; color?: stri
   );
 }
 
-function DataRow(props: { left: string; bar?: string; right: string; color?: string }) {
+function DataRow(props: { left: string; bar?: React.ReactNode; right: string; color?: string }) {
   return (
     <Box>
       <Box width={28}>
@@ -107,7 +115,7 @@ function DataRow(props: { left: string; bar?: string; right: string; color?: str
         <Text> </Text>
       </Box>
       <Box width={22}>
-        <Text color={props.color ?? "cyan"}>{props.bar ?? ""}</Text>
+        {props.bar ?? null}
       </Box>
       <Box width={2}>
         <Text> </Text>
@@ -117,6 +125,268 @@ function DataRow(props: { left: string; bar?: string; right: string; color?: str
   );
 }
 
+function UsageIndicator(props: {
+  label: string;
+  used: number;
+  total: number;
+  todayCostUsd: number;
+  todayEvents: number;
+  monthCostUsd: number;
+  monthEvents: number;
+  color?: string;
+}) {
+  const percent = props.total > 0 ? Math.round((props.used / props.total) * 100) : 0;
+  const filled = fillWidth(props.used, props.total, 22);
+  const empty = 22 - filled;
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={props.color ?? "gray"}
+      paddingX={1}
+      marginBottom={1}
+    >
+      <Text bold color={props.color ?? "white"}>{props.label}</Text>
+      <Text color="gray">{`${percent}% of today (${formatCompactNumber(props.used)} / ${formatCompactNumber(props.total)})`}</Text>
+      <Box marginTop={1}>
+        <Text>
+          <Text backgroundColor="white">{`${" ".repeat(filled)}`}</Text>
+          <Text backgroundColor="gray">{`${" ".repeat(empty)}`}</Text>
+        </Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text dimColor>{`Today  ${formatUsd(props.todayCostUsd)} / ${formatNumber(props.todayEvents)} events`}</Text>
+        <Text dimColor>{`Month  ${formatUsd(props.monthCostUsd)} / ${formatNumber(props.monthEvents)} events`}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function InvertedBar(props: { value: number; total: number; width?: number }) {
+  const width = props.width ?? 22;
+  const filled = fillWidth(props.value, props.total, width);
+  const empty = width - filled;
+
+  return (
+    <Text>
+      <Text backgroundColor="white">{`${" ".repeat(filled)}`}</Text>
+      <Text backgroundColor="gray">{`${" ".repeat(empty)}`}</Text>
+    </Text>
+  );
+}
+
+function buildDashboardDataSignature(data: DashboardData): string {
+  return JSON.stringify(data);
+}
+
+const DashboardHeader = memo(function DashboardHeader(props: {
+  date: string;
+  source: DashboardSourceFilter;
+  watch: boolean;
+  intervalSeconds: number;
+}) {
+  return (
+    <Box justifyContent="space-between">
+      <Box>
+        <Text bold color="white">Claude Cost TUI</Text>
+        <Text color="gray">  {props.date}</Text>
+        <Text color="gray">  {formatSourceFilterLabel(props.source)}</Text>
+      </Box>
+      <Text color="gray">
+        {props.watch ? `watch ${props.intervalSeconds}s` : "manual"} | r refresh | tab switch | q quit
+      </Text>
+    </Box>
+  );
+});
+
+const DashboardTabs = memo(function DashboardTabs(props: { tab: TabId }) {
+  return (
+    <Box marginTop={1}>
+      {TABS.map((candidate, index) => (
+        <Box key={candidate.id} marginRight={1}>
+          <Text color={candidate.id === props.tab ? "black" : "gray"} backgroundColor={candidate.id === props.tab ? "cyan" : undefined}>
+            {` ${index + 1}. ${candidate.label} `}
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  );
+});
+
+const DashboardMeta = memo(function DashboardMeta(props: { dbPath: string; refreshedAt: string }) {
+  return (
+    <Box marginTop={1}>
+      <Text color="gray">Database: {props.dbPath}</Text>
+      <Text color="gray">  Refreshed: {props.refreshedAt || "n/a"}</Text>
+    </Box>
+  );
+});
+
+const OverviewTab = memo(function OverviewTab(props: { data: DashboardData; source: DashboardSourceFilter }) {
+  const maxDaily = Math.max(...props.data.dailyRows.map((row) => row.estimatedCostUsd), 0);
+  const sourceRows = DASHBOARD_SOURCES.map((source) => {
+    const today = props.data.today.bySource.find((row) => row.source === source);
+    const month = props.data.month.bySource.find((row) => row.source === source);
+
+    return {
+      source,
+      todayTokens: today?.totalTokens ?? 0,
+      todayCostUsd: today?.estimatedCostUsd ?? 0,
+      todayEvents: today?.events ?? 0,
+      monthCostUsd: month?.estimatedCostUsd ?? 0,
+      monthEvents: month?.events ?? 0,
+    };
+  });
+
+  return (
+    <>
+      <Box marginTop={1} gap={1}>
+        <MetricCard label="Today" value={formatUsd(props.data.today.estimatedCostUsd)} detail={`${formatNumber(props.data.today.events)} events`} color="cyan" />
+        <MetricCard label="Week" value={formatUsd(props.data.week.estimatedCostUsd)} detail={`${formatNumber(props.data.week.events)} events`} color="green" />
+        <MetricCard label="Month" value={formatUsd(props.data.month.estimatedCostUsd)} detail={`${formatNumber(props.data.month.events)} events`} color="magenta" />
+      </Box>
+      <Box marginTop={1} gap={1}>
+        <MetricCard label="Input Today" value={formatNumber(props.data.today.totalInputTokens)} detail="input tokens" color="blue" />
+        <MetricCard label="Output Today" value={formatNumber(props.data.today.totalOutputTokens)} detail="output tokens" color="yellow" />
+        <MetricCard label="Cache Read Today" value={formatNumber(props.data.today.totalCacheReadTokens)} detail="cache read tokens" color="green" />
+      </Box>
+      <Box marginTop={1} gap={1}>
+        {props.data.today.bySource.map((source) => (
+          <MetricCard
+            key={source.source}
+            label={source.source}
+            value={formatUsd(source.estimatedCostUsd)}
+            detail={
+              source.tokenBreakdownKnown
+                ? `${formatNumber(source.totalTokens)} tokens`
+                : `${formatNumber(source.totalTokens)} tokens, aggregate estimate`
+            }
+            color={source.source === "codex-cli" ? "yellow" : "cyan"}
+          />
+        ))}
+      </Box>
+
+      {props.source === "all" ? (
+        <Section title="Sources" color="yellow">
+          {sourceRows.map((row) => (
+            <UsageIndicator
+              key={row.source}
+              label={formatSourceLabel(row.source)}
+              used={row.todayTokens}
+              total={props.data.today.totalTokens}
+              todayCostUsd={row.todayCostUsd}
+              todayEvents={row.todayEvents}
+              monthCostUsd={row.monthCostUsd}
+              monthEvents={row.monthEvents}
+              color={sourceColor(row.source)}
+            />
+          ))}
+        </Section>
+      ) : null}
+
+      <Section title="7-Day Trend" color="cyan">
+        {props.data.dailyRows.map((row) => (
+          <DataRow
+            key={row.date}
+            left={row.date}
+            bar={<InvertedBar value={row.estimatedCostUsd} total={maxDaily} />}
+            right={`${formatUsd(row.estimatedCostUsd)}   ${formatNumber(row.events)} events`}
+            color="cyan"
+          />
+        ))}
+      </Section>
+    </>
+  );
+});
+
+const ProjectsTab = memo(function ProjectsTab(props: { data: DashboardData }) {
+  const maxTodayProject = Math.max(...props.data.todayProjects.slice(0, 5).map((row) => row.estimatedCostUsd), 0);
+  const maxMonthProject = Math.max(...props.data.monthProjects.slice(0, 8).map((row) => row.estimatedCostUsd), 0);
+
+  return (
+    <>
+      <Section title="Top Projects Today" color="green">
+        {props.data.todayProjects.slice(0, 5).map((project) => (
+          <DataRow
+            key={`today-${project.project}`}
+            left={project.displayProject}
+            bar={<InvertedBar value={project.estimatedCostUsd} total={maxTodayProject} />}
+            right={`${formatUsd(project.estimatedCostUsd)}   ${formatNumber(project.events)} events`}
+            color="green"
+          />
+        ))}
+        {props.data.todayProjects.length === 0 ? <Text dimColor>No project usage today.</Text> : null}
+      </Section>
+
+      <Section title="Top Projects This Month" color="green">
+        {props.data.monthProjects.slice(0, 8).map((project) => (
+          <DataRow
+            key={`month-${project.project}`}
+            left={project.displayProject}
+            bar={<InvertedBar value={project.estimatedCostUsd} total={maxMonthProject} />}
+            right={`${formatUsd(project.estimatedCostUsd)}   ${formatNumber(project.events)} events`}
+            color="green"
+          />
+        ))}
+      </Section>
+    </>
+  );
+});
+
+const ModelsTab = memo(function ModelsTab(props: { data: DashboardData }) {
+  const maxMonthModel = Math.max(...props.data.monthModels.slice(0, 8).map((row) => row.estimatedCostUsd), 0);
+
+  return (
+    <>
+      <Section title="Top Models Today" color="magenta">
+        {props.data.todayModels.slice(0, 5).map((model) => (
+          <DataRow
+            key={`today-${model.model}`}
+            left={`${model.model}${model.model.startsWith("gpt-5") ? " *" : ""}`}
+            bar={<InvertedBar value={model.estimatedCostUsd} total={props.data.today.estimatedCostUsd} />}
+            right={`${formatUsd(model.estimatedCostUsd)}   ${formatNumber(model.events)} events`}
+            color="magenta"
+          />
+        ))}
+        <Box marginTop={1}>
+          <Text dimColor>* aggregate-token estimate when local source has no prompt/output split</Text>
+        </Box>
+      </Section>
+
+      <Section title="Top Models This Month" color="magenta">
+        {props.data.monthModels.slice(0, 8).map((model) => (
+          <DataRow
+            key={`month-${model.model}`}
+            left={`${model.model}${model.model.startsWith("gpt-5") ? " *" : ""}`}
+            bar={<InvertedBar value={model.estimatedCostUsd} total={maxMonthModel} />}
+            right={`${formatUsd(model.estimatedCostUsd)}   ${formatNumber(model.events)} events`}
+            color="magenta"
+          />
+        ))}
+      </Section>
+    </>
+  );
+});
+
+const DailyTab = memo(function DailyTab(props: { modelRows: DashboardData["modelRows"] }) {
+  return (
+    <Section title="Daily Model Leaders" color="blue">
+      {props.modelRows.map((row) => (
+        <Box key={row.date} flexDirection="column" marginBottom={1}>
+          <Text bold color="blue">{row.date}</Text>
+          {row.models.slice(0, 3).map((model) => (
+            <Text key={`${row.date}-${model.model}`}>
+              {`  ${model.model}  ${formatUsd(model.estimatedCostUsd)}  ${formatNumber(model.events)} events`}
+            </Text>
+          ))}
+          {row.models.length === 0 ? <Text dimColor>  no usage</Text> : null}
+        </Box>
+      ))}
+    </Section>
+  );
+});
+
 export function DashboardApp(props: DashboardAppProps) {
   const { exit } = useApp();
   const [tab, setTab] = useState<TabId>("overview");
@@ -124,6 +394,7 @@ export function DashboardApp(props: DashboardAppProps) {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<string>("");
+  const dataSignatureRef = useRef<string>("");
 
   useInput((input, key) => {
     if (input === "q" || key.escape) {
@@ -166,7 +437,11 @@ export function DashboardApp(props: DashboardAppProps) {
         sync: props.sync,
         source: props.source,
       });
-      setData(nextData);
+      const nextSignature = buildDashboardDataSignature(nextData);
+      if (nextSignature !== dataSignatureRef.current) {
+        dataSignatureRef.current = nextSignature;
+        setData(nextData);
+      }
       setRefreshedAt(formatLocalTimestamp());
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : String(nextError);
@@ -194,45 +469,15 @@ export function DashboardApp(props: DashboardAppProps) {
     };
   }, [props.watch, props.intervalSeconds, props.root, props.dbPath, props.codexStatePath, props.date, props.sync, props.source]);
 
-  const maxDaily = Math.max(...(data?.dailyRows.map((row) => row.estimatedCostUsd) ?? [0]), 0);
-  const maxTodayProject = Math.max(...(data?.todayProjects.slice(0, 5).map((row) => row.estimatedCostUsd) ?? [0]), 0);
-  const maxMonthProject = Math.max(...(data?.monthProjects.slice(0, 8).map((row) => row.estimatedCostUsd) ?? [0]), 0);
-  const maxMonthModel = Math.max(...(data?.monthModels.slice(0, 8).map((row) => row.estimatedCostUsd) ?? [0]), 0);
-  const sourceRows = DASHBOARD_SOURCES.map((source) => {
-    const today = data?.today.bySource.find((row) => row.source === source);
-    const month = data?.month.bySource.find((row) => row.source === source);
-
-    return {
-      source,
-      todayCostUsd: today?.estimatedCostUsd ?? 0,
-      todayEvents: today?.events ?? 0,
-      monthCostUsd: month?.estimatedCostUsd ?? 0,
-      monthEvents: month?.events ?? 0,
-    };
-  });
-
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box justifyContent="space-between">
-        <Box>
-          <Text bold color="white">Claude Cost TUI</Text>
-          <Text color="gray">  {props.date}</Text>
-          <Text color="gray">  {formatSourceFilterLabel(props.source)}</Text>
-        </Box>
-        <Text color="gray">
-          {props.watch ? `watch ${props.intervalSeconds}s` : "manual"} | r refresh | tab switch | q quit
-        </Text>
-      </Box>
-
-      <Box marginTop={1}>
-        {TABS.map((candidate, index) => (
-          <Box key={candidate.id} marginRight={1}>
-            <Text color={candidate.id === tab ? "black" : "gray"} backgroundColor={candidate.id === tab ? "cyan" : undefined}>
-              {` ${index + 1}. ${candidate.label} `}
-            </Text>
-          </Box>
-        ))}
-      </Box>
+      <DashboardHeader
+        date={props.date}
+        source={props.source}
+        watch={props.watch}
+        intervalSeconds={props.intervalSeconds}
+      />
+      <DashboardTabs tab={tab} />
 
       {loading && !data ? (
         <Box marginTop={2}><Text color="yellow">Loading dashboard...</Text></Box>
@@ -246,141 +491,11 @@ export function DashboardApp(props: DashboardAppProps) {
 
       {data ? (
         <>
-          <Box marginTop={1}>
-            <Text color="gray">Database: {props.dbPath}</Text>
-            <Text color="gray">  Refreshed: {refreshedAt || "n/a"}</Text>
-          </Box>
-
-          {tab === "overview" ? (
-            <>
-              <Box marginTop={1} gap={1}>
-                <MetricCard label="Today" value={formatUsd(data.today.estimatedCostUsd)} detail={`${formatNumber(data.today.events)} events`} color="cyan" />
-                <MetricCard label="Week" value={formatUsd(data.week.estimatedCostUsd)} detail={`${formatNumber(data.week.events)} events`} color="green" />
-                <MetricCard label="Month" value={formatUsd(data.month.estimatedCostUsd)} detail={`${formatNumber(data.month.events)} events`} color="magenta" />
-              </Box>
-              <Box marginTop={1} gap={1}>
-                <MetricCard label="Input Today" value={formatNumber(data.today.totalInputTokens)} detail="input tokens" color="blue" />
-                <MetricCard label="Output Today" value={formatNumber(data.today.totalOutputTokens)} detail="output tokens" color="yellow" />
-                <MetricCard label="Cache Read Today" value={formatNumber(data.today.totalCacheReadTokens)} detail="cache read tokens" color="green" />
-              </Box>
-              <Box marginTop={1} gap={1}>
-                {data.today.bySource.map((source) => (
-                  <MetricCard
-                    key={source.source}
-                    label={source.source}
-                    value={formatUsd(source.estimatedCostUsd)}
-                    detail={
-                      source.tokenBreakdownKnown
-                        ? `${formatNumber(source.totalTokens)} tokens`
-                        : `${formatNumber(source.totalTokens)} tokens, aggregate estimate`
-                    }
-                    color={source.source === "codex-cli" ? "yellow" : "cyan"}
-                  />
-                ))}
-              </Box>
-
-              {props.source === "all" ? (
-                <Section title="Sources" color="yellow">
-                  {sourceRows.map((row) => (
-                    <DataRow
-                      key={row.source}
-                      left={formatSourceLabel(row.source)}
-                      right={`Today ${formatUsd(row.todayCostUsd)} / ${formatNumber(row.todayEvents)}   Month ${formatUsd(row.monthCostUsd)} / ${formatNumber(row.monthEvents)}`}
-                      color={sourceColor(row.source)}
-                    />
-                  ))}
-                </Section>
-              ) : null}
-
-              <Section title="7-Day Trend" color="cyan">
-                {data.dailyRows.map((row) => (
-                  <DataRow
-                    key={row.date}
-                    left={row.date}
-                    bar={spark(row.estimatedCostUsd, maxDaily)}
-                    right={`${formatUsd(row.estimatedCostUsd)}   ${formatNumber(row.events)} events`}
-                    color="cyan"
-                  />
-                ))}
-              </Section>
-            </>
-          ) : null}
-
-          {tab === "projects" ? (
-            <>
-              <Section title="Top Projects Today" color="green">
-                {data.todayProjects.slice(0, 5).map((project) => (
-                  <DataRow
-                    key={`today-${project.project}`}
-                    left={project.displayProject}
-                    bar={spark(project.estimatedCostUsd, maxTodayProject)}
-                    right={`${formatUsd(project.estimatedCostUsd)}   ${formatNumber(project.events)} events`}
-                    color="green"
-                  />
-                ))}
-                {data.todayProjects.length === 0 ? <Text dimColor>No project usage today.</Text> : null}
-              </Section>
-
-              <Section title="Top Projects This Month" color="green">
-                {data.monthProjects.slice(0, 8).map((project) => (
-                  <DataRow
-                    key={`month-${project.project}`}
-                    left={project.displayProject}
-                    bar={spark(project.estimatedCostUsd, maxMonthProject)}
-                    right={`${formatUsd(project.estimatedCostUsd)}   ${formatNumber(project.events)} events`}
-                    color="green"
-                  />
-                ))}
-              </Section>
-            </>
-          ) : null}
-
-          {tab === "models" ? (
-            <>
-              <Section title="Top Models Today" color="magenta">
-                {data.todayModels.slice(0, 5).map((model) => (
-                  <DataRow
-                    key={`today-${model.model}`}
-                    left={`${model.model}${model.model.startsWith("gpt-5") ? " *" : ""}`}
-                    bar={spark(model.estimatedCostUsd, data.today.estimatedCostUsd)}
-                    right={`${formatUsd(model.estimatedCostUsd)}   ${formatNumber(model.events)} events`}
-                    color="magenta"
-                  />
-                ))}
-                <Box marginTop={1}>
-                  <Text dimColor>* aggregate-token estimate when local source has no prompt/output split</Text>
-                </Box>
-              </Section>
-
-              <Section title="Top Models This Month" color="magenta">
-                {data.monthModels.slice(0, 8).map((model) => (
-                  <DataRow
-                    key={`month-${model.model}`}
-                    left={`${model.model}${model.model.startsWith("gpt-5") ? " *" : ""}`}
-                    bar={spark(model.estimatedCostUsd, maxMonthModel)}
-                    right={`${formatUsd(model.estimatedCostUsd)}   ${formatNumber(model.events)} events`}
-                    color="magenta"
-                  />
-                ))}
-              </Section>
-            </>
-          ) : null}
-
-          {tab === "daily" ? (
-            <Section title="Daily Model Leaders" color="blue">
-              {data.modelRows.map((row) => (
-                <Box key={row.date} flexDirection="column" marginBottom={1}>
-                  <Text bold color="blue">{row.date}</Text>
-                  {row.models.slice(0, 3).map((model) => (
-                    <Text key={`${row.date}-${model.model}`}>
-                      {`  ${model.model}  ${formatUsd(model.estimatedCostUsd)}  ${formatNumber(model.events)} events`}
-                    </Text>
-                  ))}
-                  {row.models.length === 0 ? <Text dimColor>  no usage</Text> : null}
-                </Box>
-              ))}
-            </Section>
-          ) : null}
+          <DashboardMeta dbPath={props.dbPath} refreshedAt={refreshedAt} />
+          {tab === "overview" ? <OverviewTab data={data} source={props.source} /> : null}
+          {tab === "projects" ? <ProjectsTab data={data} /> : null}
+          {tab === "models" ? <ModelsTab data={data} /> : null}
+          {tab === "daily" ? <DailyTab modelRows={data.modelRows} /> : null}
         </>
       ) : null}
     </Box>

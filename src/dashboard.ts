@@ -26,6 +26,12 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+function formatCompactNumber(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return formatNumber(value);
+}
+
 function formatSourceLabel(source: DashboardSourceId): string {
   switch (source) {
     case "claude-code":
@@ -82,6 +88,16 @@ function miniBar(value: number, max: number, width = 16, tone = CYAN): string {
   const filled = Math.max(0, Math.min(width, Math.round((value / max) * width)));
   const solid = filled > 0 ? color(repeat("#", filled), tone) : "";
   return `${solid}${color(repeat(".", width - filled), DIM)}`;
+}
+
+function ratioBar(value: number, total: number, width = 18, tone = CYAN): string {
+  if (total <= 0) {
+    return repeat(" ", width);
+  }
+
+  const filled = Math.max(0, Math.min(width, Math.round((value / total) * width)));
+  const solid = filled > 0 ? color(repeat("█", filled), tone) : "";
+  return `${solid}${color(repeat("░", width - filled), DIM)}`;
 }
 
 function pad(text: string, width: number): string {
@@ -159,8 +175,10 @@ export function renderDashboard(
   const sourceLines = DASHBOARD_SOURCES.map((source) => {
     const todaySource = today.bySource.find((row) => row.source === source);
     const monthSource = month.bySource.find((row) => row.source === source);
+    const todayTokens = todaySource?.totalTokens ?? 0;
+    const percent = today.totalTokens > 0 ? Math.round((todayTokens / today.totalTokens) * 100) : 0;
 
-    return `${padAnsi(color(formatSourceLabel(source), sourceTone(source)), 18)}  ${color("Today", DIM)} ${color(formatUsd(todaySource?.estimatedCostUsd ?? 0).padStart(8), YELLOW)} ${color(formatNumber(todaySource?.events ?? 0).padStart(5), DIM)} ev  ${color("Month", DIM)} ${color(formatUsd(monthSource?.estimatedCostUsd ?? 0).padStart(8), YELLOW)} ${color(formatNumber(monthSource?.events ?? 0).padStart(5), DIM)} ev`;
+    return `${padAnsi(color(formatSourceLabel(source), sourceTone(source)), 12)} ${color(String(percent).padStart(3), WHITE)}% ${color("today", DIM)} (${formatCompactNumber(todayTokens)} / ${formatCompactNumber(today.totalTokens)}) [${ratioBar(todayTokens, today.totalTokens, 18, sourceTone(source))}]  ${color("Month", DIM)} ${color(formatUsd(monthSource?.estimatedCostUsd ?? 0).padStart(8), YELLOW)} ${color(formatNumber(monthSource?.events ?? 0).padStart(5), DIM)} ev`;
   });
 
   const lines: string[] = [];
