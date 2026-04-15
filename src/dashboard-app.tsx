@@ -2,6 +2,12 @@ import React, { memo, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 
 import {
+  readClaudeUsageSnapshot,
+  refreshPersistedClaudeUsageSnapshot,
+  type ClaudeUsageSnapshot,
+  type ClaudeUsageWindow,
+} from "./claude-usage";
+import {
   formatLocalTimestamp,
   loadDashboardData,
   type DashboardData,
@@ -22,6 +28,15 @@ type DashboardAppProps = {
 type TabId = "overview" | "projects" | "models" | "daily";
 
 type DashboardSourceId = Exclude<DashboardSourceFilter, "all">;
+type DashboardToday = DashboardData["today"];
+type DashboardWeek = DashboardData["week"];
+type DashboardMonth = DashboardData["month"];
+type DashboardTodayProjects = DashboardData["todayProjects"];
+type DashboardMonthProjects = DashboardData["monthProjects"];
+type DashboardTodayModels = DashboardData["todayModels"];
+type DashboardMonthModels = DashboardData["monthModels"];
+type DashboardDailyRows = DashboardData["dailyRows"];
+type DashboardModelRows = DashboardData["modelRows"];
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -31,6 +46,7 @@ const TABS: Array<{ id: TabId; label: string }> = [
 ];
 
 const DASHBOARD_SOURCES: DashboardSourceId[] = ["claude-code", "codex-cli", "cursor"];
+const CLAUDE_USAGE_REFRESH_INTERVAL_MS = 300_000;
 
 function formatUsd(amount: number): string {
   if (amount >= 1) return `$${amount.toFixed(2)}`;
@@ -86,6 +102,10 @@ function fillWidth(value: number, total: number, width: number): number {
   return Math.max(0, Math.min(width, Math.round((value / total) * width)));
 }
 
+function isClaudeUsageStale(lastCheckedMs: number): boolean {
+  return Date.now() - lastCheckedMs >= CLAUDE_USAGE_REFRESH_INTERVAL_MS;
+}
+
 function MetricCard(props: { label: string; value: string; detail: string; color?: string }) {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={props.color ?? "cyan"} paddingX={1} width={26}>
@@ -105,7 +125,7 @@ function Section(props: { title: string; children: React.ReactNode; color?: stri
   );
 }
 
-function DataRow(props: { left: string; bar?: React.ReactNode; right: string; color?: string }) {
+function DataRow(props: { left: string; bar?: React.ReactNode; right: React.ReactNode; color?: string }) {
   return (
     <Box>
       <Box width={28}>
@@ -120,7 +140,25 @@ function DataRow(props: { left: string; bar?: React.ReactNode; right: string; co
       <Box width={2}>
         <Text> </Text>
       </Box>
-      <Text>{props.right}</Text>
+      <Box width={28}>
+        {props.right}
+      </Box>
+    </Box>
+  );
+}
+
+function RowStats(props: { amount: string; events?: string }) {
+  return (
+    <Box>
+      <Box width={10}>
+        <Text>{props.amount}</Text>
+      </Box>
+      <Box width={2}>
+        <Text> </Text>
+      </Box>
+      <Box width={16}>
+        <Text>{props.events ?? ""}</Text>
+      </Box>
     </Box>
   );
 }
@@ -129,6 +167,7 @@ function UsageIndicator(props: {
   label: string;
   used: number;
   total: number;
+  totalTokensLabel: string;
   todayCostUsd: number;
   todayEvents: number;
   monthCostUsd: number;
@@ -148,7 +187,7 @@ function UsageIndicator(props: {
       marginBottom={1}
     >
       <Text bold color={props.color ?? "white"}>{props.label}</Text>
-      <Text color="gray">{`${percent}% of today (${formatCompactNumber(props.used)} / ${formatCompactNumber(props.total)})`}</Text>
+      <Text color="gray">{`${percent}% of today (${formatCompactNumber(props.used)} / ${formatCompactNumber(props.total)} total)`}</Text>
       <Box marginTop={1}>
         <Text>
           <Text backgroundColor="white">{`${" ".repeat(filled)}`}</Text>
@@ -156,8 +195,41 @@ function UsageIndicator(props: {
         </Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
+        <Text dimColor>{props.totalTokensLabel}</Text>
         <Text dimColor>{`Today  ${formatUsd(props.todayCostUsd)} / ${formatNumber(props.todayEvents)} events`}</Text>
         <Text dimColor>{`Month  ${formatUsd(props.monthCostUsd)} / ${formatNumber(props.monthEvents)} events`}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function ClaudeUsageCard(props: { window: ClaudeUsageWindow; color?: string }) {
+  const filled = fillWidth(props.window.percentLeft, 100, 22);
+  const empty = 22 - filled;
+  const usageText = props.window.usedText && props.window.totalText
+    ? `${props.window.usedText} used / ${props.window.totalText}`
+    : props.window.detailText;
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={props.color ?? "cyan"}
+      paddingX={1}
+      width={36}
+      marginRight={1}
+    >
+      <Text bold color={props.color ?? "white"}>{props.window.label}</Text>
+      <Text color="gray">{`${props.window.percentLeft}% left`}</Text>
+      <Box marginTop={1}>
+        <Text>
+          <Text backgroundColor="white">{`${" ".repeat(filled)}`}</Text>
+          <Text backgroundColor="gray">{`${" ".repeat(empty)}`}</Text>
+        </Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text dimColor>{usageText}</Text>
+        <Text dimColor>{props.window.resetText ? `Resets ${props.window.resetText}` : "Reset not provided by Claude"}</Text>
       </Box>
     </Box>
   );
@@ -223,15 +295,26 @@ const DashboardMeta = memo(function DashboardMeta(props: { dbPath: string; refre
   );
 });
 
-const OverviewTab = memo(function OverviewTab(props: { data: DashboardData; source: DashboardSourceFilter }) {
-  const maxDaily = Math.max(...props.data.dailyRows.map((row) => row.estimatedCostUsd), 0);
+const OverviewTab = memo(function OverviewTab(props: {
+  source: DashboardSourceFilter;
+  today: DashboardToday;
+  week: DashboardWeek;
+  month: DashboardMonth;
+  dailyRows: DashboardDailyRows;
+  claudeUsage: ClaudeUsageSnapshot | null;
+  claudeUsageRefreshing: boolean;
+}) {
+  const maxDaily = Math.max(...props.dailyRows.map((row) => row.estimatedCostUsd), 0);
   const sourceRows = DASHBOARD_SOURCES.map((source) => {
-    const today = props.data.today.bySource.find((row) => row.source === source);
-    const month = props.data.month.bySource.find((row) => row.source === source);
+    const today = props.today.bySource.find((row) => row.source === source);
+    const month = props.month.bySource.find((row) => row.source === source);
 
     return {
       source,
       todayTokens: today?.totalTokens ?? 0,
+      totalTokensLabel: today?.tokenBreakdownKnown
+        ? `${formatNumber(today?.totalTokens ?? 0)} total tokens including input, output, cache read, and cache write`
+        : `${formatNumber(today?.totalTokens ?? 0)} total tokens from aggregate estimate`,
       todayCostUsd: today?.estimatedCostUsd ?? 0,
       todayEvents: today?.events ?? 0,
       monthCostUsd: month?.estimatedCostUsd ?? 0,
@@ -242,31 +325,31 @@ const OverviewTab = memo(function OverviewTab(props: { data: DashboardData; sour
   return (
     <>
       <Box marginTop={1} gap={1}>
-        <MetricCard label="Today" value={formatUsd(props.data.today.estimatedCostUsd)} detail={`${formatNumber(props.data.today.events)} events`} color="cyan" />
-        <MetricCard label="Week" value={formatUsd(props.data.week.estimatedCostUsd)} detail={`${formatNumber(props.data.week.events)} events`} color="green" />
-        <MetricCard label="Month" value={formatUsd(props.data.month.estimatedCostUsd)} detail={`${formatNumber(props.data.month.events)} events`} color="magenta" />
+        <MetricCard label="Today" value={formatUsd(props.today.estimatedCostUsd)} detail={`${formatNumber(props.today.events)} events`} color="cyan" />
+        <MetricCard label="Week" value={formatUsd(props.week.estimatedCostUsd)} detail={`${formatNumber(props.week.events)} events`} color="green" />
+        <MetricCard label="Month" value={formatUsd(props.month.estimatedCostUsd)} detail={`${formatNumber(props.month.events)} events`} color="magenta" />
       </Box>
       <Box marginTop={1} gap={1}>
-        <MetricCard label="Input Today" value={formatNumber(props.data.today.totalInputTokens)} detail="input tokens" color="blue" />
-        <MetricCard label="Output Today" value={formatNumber(props.data.today.totalOutputTokens)} detail="output tokens" color="yellow" />
-        <MetricCard label="Cache Read Today" value={formatNumber(props.data.today.totalCacheReadTokens)} detail="cache read tokens" color="green" />
+        <MetricCard label="Input Today" value={formatNumber(props.today.totalInputTokens)} detail="input tokens" color="blue" />
+        <MetricCard label="Output Today" value={formatNumber(props.today.totalOutputTokens)} detail="output tokens" color="yellow" />
+        <MetricCard label="Cache Read Today" value={formatNumber(props.today.totalCacheReadTokens)} detail="cache read tokens" color="green" />
+        <MetricCard label="Cache Write Today" value={formatNumber(props.today.totalCacheWriteTokens)} detail="cache write tokens" color="magenta" />
       </Box>
       <Box marginTop={1} gap={1}>
-        {props.data.today.bySource.map((source) => (
+        {props.today.bySource.map((source) => (
           <MetricCard
             key={source.source}
             label={source.source}
             value={formatUsd(source.estimatedCostUsd)}
             detail={
               source.tokenBreakdownKnown
-                ? `${formatNumber(source.totalTokens)} tokens`
-                : `${formatNumber(source.totalTokens)} tokens, aggregate estimate`
+                ? `${formatNumber(source.totalTokens)} total tokens`
+                : `${formatNumber(source.totalTokens)} total tokens, aggregate estimate`
             }
             color={source.source === "codex-cli" ? "yellow" : "cyan"}
           />
         ))}
       </Box>
-
       {props.source === "all" ? (
         <Section title="Sources" color="yellow">
           {sourceRows.map((row) => (
@@ -274,7 +357,8 @@ const OverviewTab = memo(function OverviewTab(props: { data: DashboardData; sour
               key={row.source}
               label={formatSourceLabel(row.source)}
               used={row.todayTokens}
-              total={props.data.today.totalTokens}
+              total={props.today.totalTokens}
+              totalTokensLabel={row.totalTokensLabel}
               todayCostUsd={row.todayCostUsd}
               todayEvents={row.todayEvents}
               monthCostUsd={row.monthCostUsd}
@@ -285,13 +369,53 @@ const OverviewTab = memo(function OverviewTab(props: { data: DashboardData; sour
         </Section>
       ) : null}
 
+      {(props.source === "all" || props.source === "claude-code") ? (
+        <Section title="Claude Usage" color="cyan">
+          {props.claudeUsage?.status === "available" ? (
+            <>
+              <Box>
+                {props.claudeUsage.windows.map((window) => (
+                  <ClaudeUsageCard
+                    key={window.id}
+                    window={window}
+                    color={window.id === "fiveHour" ? "cyan" : window.id === "weeklyAllModels" ? "green" : "magenta"}
+                  />
+                ))}
+              </Box>
+              <Box marginTop={1}>
+                <Text dimColor>{`Fetched from Claude /usage at ${formatLocalTimestamp(new Date(props.claudeUsage.fetchedAt))}`}</Text>
+              </Box>
+              {props.claudeUsageRefreshing ? (
+                <Box marginTop={1}>
+                  <Text color="yellow">Refreshing Claude usage in background...</Text>
+                </Box>
+              ) : null}
+            </>
+          ) : props.claudeUsage ? (
+            <>
+              <Text dimColor>{props.claudeUsage.message ?? "Claude usage data is currently unavailable."}</Text>
+              <Box marginTop={1}>
+                <Text dimColor>{`Last checked at ${formatLocalTimestamp(new Date(props.claudeUsage.fetchedAt))}`}</Text>
+              </Box>
+              {props.claudeUsageRefreshing ? (
+                <Box marginTop={1}>
+                  <Text color="yellow">Refreshing Claude usage in background...</Text>
+                </Box>
+              ) : null}
+            </>
+          ) : (
+            <Text dimColor>{props.claudeUsageRefreshing ? "Refreshing Claude usage in background..." : "Loading Claude usage..."}</Text>
+          )}
+        </Section>
+      ) : null}
+
       <Section title="7-Day Trend" color="cyan">
-        {props.data.dailyRows.map((row) => (
+        {props.dailyRows.map((row) => (
           <DataRow
             key={row.date}
             left={row.date}
             bar={<InvertedBar value={row.estimatedCostUsd} total={maxDaily} />}
-            right={`${formatUsd(row.estimatedCostUsd)}   ${formatNumber(row.events)} events`}
+            right={<RowStats amount={formatUsd(row.estimatedCostUsd)} events={`${formatNumber(row.events)} events`} />}
             color="cyan"
           />
         ))}
@@ -300,32 +424,35 @@ const OverviewTab = memo(function OverviewTab(props: { data: DashboardData; sour
   );
 });
 
-const ProjectsTab = memo(function ProjectsTab(props: { data: DashboardData }) {
-  const maxTodayProject = Math.max(...props.data.todayProjects.slice(0, 5).map((row) => row.estimatedCostUsd), 0);
-  const maxMonthProject = Math.max(...props.data.monthProjects.slice(0, 8).map((row) => row.estimatedCostUsd), 0);
+const ProjectsTab = memo(function ProjectsTab(props: {
+  todayProjects: DashboardTodayProjects;
+  monthProjects: DashboardMonthProjects;
+}) {
+  const maxTodayProject = Math.max(...props.todayProjects.slice(0, 5).map((row) => row.estimatedCostUsd), 0);
+  const maxMonthProject = Math.max(...props.monthProjects.slice(0, 8).map((row) => row.estimatedCostUsd), 0);
 
   return (
     <>
       <Section title="Top Projects Today" color="green">
-        {props.data.todayProjects.slice(0, 5).map((project) => (
+        {props.todayProjects.slice(0, 5).map((project) => (
           <DataRow
             key={`today-${project.project}`}
             left={project.displayProject}
             bar={<InvertedBar value={project.estimatedCostUsd} total={maxTodayProject} />}
-            right={`${formatUsd(project.estimatedCostUsd)}   ${formatNumber(project.events)} events`}
+            right={<RowStats amount={formatUsd(project.estimatedCostUsd)} events={`${formatNumber(project.events)} events`} />}
             color="green"
           />
         ))}
-        {props.data.todayProjects.length === 0 ? <Text dimColor>No project usage today.</Text> : null}
+        {props.todayProjects.length === 0 ? <Text dimColor>No project usage today.</Text> : null}
       </Section>
 
       <Section title="Top Projects This Month" color="green">
-        {props.data.monthProjects.slice(0, 8).map((project) => (
+        {props.monthProjects.slice(0, 8).map((project) => (
           <DataRow
             key={`month-${project.project}`}
             left={project.displayProject}
             bar={<InvertedBar value={project.estimatedCostUsd} total={maxMonthProject} />}
-            right={`${formatUsd(project.estimatedCostUsd)}   ${formatNumber(project.events)} events`}
+            right={<RowStats amount={formatUsd(project.estimatedCostUsd)} events={`${formatNumber(project.events)} events`} />}
             color="green"
           />
         ))}
@@ -334,18 +461,22 @@ const ProjectsTab = memo(function ProjectsTab(props: { data: DashboardData }) {
   );
 });
 
-const ModelsTab = memo(function ModelsTab(props: { data: DashboardData }) {
-  const maxMonthModel = Math.max(...props.data.monthModels.slice(0, 8).map((row) => row.estimatedCostUsd), 0);
+const ModelsTab = memo(function ModelsTab(props: {
+  todayCostUsd: number;
+  todayModels: DashboardTodayModels;
+  monthModels: DashboardMonthModels;
+}) {
+  const maxMonthModel = Math.max(...props.monthModels.slice(0, 8).map((row) => row.estimatedCostUsd), 0);
 
   return (
     <>
       <Section title="Top Models Today" color="magenta">
-        {props.data.todayModels.slice(0, 5).map((model) => (
+        {props.todayModels.slice(0, 5).map((model) => (
           <DataRow
             key={`today-${model.model}`}
             left={`${model.model}${model.model.startsWith("gpt-5") ? " *" : ""}`}
-            bar={<InvertedBar value={model.estimatedCostUsd} total={props.data.today.estimatedCostUsd} />}
-            right={`${formatUsd(model.estimatedCostUsd)}   ${formatNumber(model.events)} events`}
+            bar={<InvertedBar value={model.estimatedCostUsd} total={props.todayCostUsd} />}
+            right={<RowStats amount={formatUsd(model.estimatedCostUsd)} events={`${formatNumber(model.events)} events`} />}
             color="magenta"
           />
         ))}
@@ -355,12 +486,12 @@ const ModelsTab = memo(function ModelsTab(props: { data: DashboardData }) {
       </Section>
 
       <Section title="Top Models This Month" color="magenta">
-        {props.data.monthModels.slice(0, 8).map((model) => (
+        {props.monthModels.slice(0, 8).map((model) => (
           <DataRow
             key={`month-${model.model}`}
             left={`${model.model}${model.model.startsWith("gpt-5") ? " *" : ""}`}
             bar={<InvertedBar value={model.estimatedCostUsd} total={maxMonthModel} />}
-            right={`${formatUsd(model.estimatedCostUsd)}   ${formatNumber(model.events)} events`}
+            right={<RowStats amount={formatUsd(model.estimatedCostUsd)} events={`${formatNumber(model.events)} events`} />}
             color="magenta"
           />
         ))}
@@ -369,18 +500,52 @@ const ModelsTab = memo(function ModelsTab(props: { data: DashboardData }) {
   );
 });
 
-const DailyTab = memo(function DailyTab(props: { modelRows: DashboardData["modelRows"] }) {
+const DailyTab = memo(function DailyTab(props: { modelRows: DashboardModelRows }) {
   return (
     <Section title="Daily Model Leaders" color="blue">
       {props.modelRows.map((row) => (
         <Box key={row.date} flexDirection="column" marginBottom={1}>
-          <Text bold color="blue">{row.date}</Text>
-          {row.models.slice(0, 3).map((model) => (
-            <Text key={`${row.date}-${model.model}`}>
-              {`  ${model.model}  ${formatUsd(model.estimatedCostUsd)}  ${formatNumber(model.events)} events`}
-            </Text>
+          <Box marginBottom={1}>
+            <Text bold color="blue">{row.date}</Text>
+          </Box>
+
+          <Box marginBottom={1}>
+            <Box width={5}>
+              <Text dimColor>Rank</Text>
+            </Box>
+            <Box width={32}>
+              <Text dimColor>Model</Text>
+            </Box>
+            <Box width={10}>
+              <Text dimColor>Cost</Text>
+            </Box>
+            <Box width={16}>
+              <Text dimColor>Events</Text>
+            </Box>
+          </Box>
+
+          {row.models.slice(0, 3).map((model, index) => (
+            <Box key={`${row.date}-${model.model}`}>
+              <Box width={5}>
+                <Text>{`#${index + 1}`}</Text>
+              </Box>
+              <Box width={32}>
+                <Text wrap="truncate-end">{model.model}</Text>
+              </Box>
+              <Box width={10}>
+                <Text>{formatUsd(model.estimatedCostUsd)}</Text>
+              </Box>
+              <Box width={16}>
+                <Text>{`${formatNumber(model.events)} events`}</Text>
+              </Box>
+            </Box>
           ))}
-          {row.models.length === 0 ? <Text dimColor>  no usage</Text> : null}
+
+          {row.models.length === 0 ? (
+            <Box>
+              <Text dimColor>no usage</Text>
+            </Box>
+          ) : null}
         </Box>
       ))}
     </Section>
@@ -394,7 +559,12 @@ export function DashboardApp(props: DashboardAppProps) {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<string>("");
+  const [claudeUsage, setClaudeUsage] = useState<ClaudeUsageSnapshot | null>(null);
+  const [claudeUsageRefreshing, setClaudeUsageRefreshing] = useState(false);
   const dataSignatureRef = useRef<string>("");
+  const claudeUsageSignatureRef = useRef<string>("");
+  const lastClaudeUsageRefreshMsRef = useRef<number>(0);
+  const claudeUsageLoadingRef = useRef(false);
 
   useInput((input, key) => {
     if (input === "q" || key.escape) {
@@ -403,7 +573,7 @@ export function DashboardApp(props: DashboardAppProps) {
     }
 
     if (input === "r") {
-      void refresh();
+      void refresh(true);
       return;
     }
 
@@ -425,11 +595,11 @@ export function DashboardApp(props: DashboardAppProps) {
     if (input === "4") setTab("daily");
   });
 
-  async function refresh() {
+  async function refresh(forceClaudeUsage = false) {
     setError(null);
     setLoading(true);
     try {
-      const nextData = await loadDashboardData({
+      const nextDataPromise = loadDashboardData({
         root: props.root,
         dbPath: props.dbPath,
         codexStatePath: props.codexStatePath,
@@ -437,6 +607,13 @@ export function DashboardApp(props: DashboardAppProps) {
         sync: props.sync,
         source: props.source,
       });
+      const shouldRefreshClaudeUsage = (props.source === "all" || props.source === "claude-code")
+        && (forceClaudeUsage || isClaudeUsageStale(lastClaudeUsageRefreshMsRef.current));
+
+      if (shouldRefreshClaudeUsage && !claudeUsageLoadingRef.current) {
+        void refreshClaudeUsage();
+      }
+      const nextData = await nextDataPromise;
       const nextSignature = buildDashboardDataSignature(nextData);
       if (nextSignature !== dataSignatureRef.current) {
         dataSignatureRef.current = nextSignature;
@@ -451,9 +628,68 @@ export function DashboardApp(props: DashboardAppProps) {
     }
   }
 
+  async function refreshClaudeUsage() {
+    if (claudeUsageLoadingRef.current) {
+      return;
+    }
+
+    claudeUsageLoadingRef.current = true;
+    setClaudeUsageRefreshing(true);
+    try {
+      const nextUsage = await refreshPersistedClaudeUsageSnapshot();
+      lastClaudeUsageRefreshMsRef.current = Date.now();
+      const nextSignature = JSON.stringify(nextUsage);
+      if (nextSignature !== claudeUsageSignatureRef.current) {
+        claudeUsageSignatureRef.current = nextSignature;
+        setClaudeUsage(nextUsage);
+      }
+    } finally {
+      claudeUsageLoadingRef.current = false;
+      setClaudeUsageRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const persistedUsage = await readClaudeUsageSnapshot();
+      if (!persistedUsage || cancelled) {
+        return;
+      }
+
+      claudeUsageSignatureRef.current = JSON.stringify(persistedUsage);
+      setClaudeUsage(persistedUsage);
+      lastClaudeUsageRefreshMsRef.current = Date.parse(persistedUsage.fetchedAt) || 0;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [props.root, props.dbPath, props.codexStatePath, props.date, props.sync, props.source]);
+
+  useEffect(() => {
+    if (props.source !== "all" && props.source !== "claude-code") {
+      return;
+    }
+
+    if (isClaudeUsageStale(lastClaudeUsageRefreshMsRef.current)) {
+      void refreshClaudeUsage();
+    }
+    const timer = setInterval(() => {
+      if (isClaudeUsageStale(lastClaudeUsageRefreshMsRef.current)) {
+        void refreshClaudeUsage();
+      }
+    }, CLAUDE_USAGE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [props.source]);
 
   useEffect(() => {
     if (!props.watch) {
@@ -492,9 +728,30 @@ export function DashboardApp(props: DashboardAppProps) {
       {data ? (
         <>
           <DashboardMeta dbPath={props.dbPath} refreshedAt={refreshedAt} />
-          {tab === "overview" ? <OverviewTab data={data} source={props.source} /> : null}
-          {tab === "projects" ? <ProjectsTab data={data} /> : null}
-          {tab === "models" ? <ModelsTab data={data} /> : null}
+          {tab === "overview" ? (
+            <OverviewTab
+              source={props.source}
+              today={data.today}
+              week={data.week}
+              month={data.month}
+              dailyRows={data.dailyRows}
+              claudeUsage={claudeUsage}
+              claudeUsageRefreshing={claudeUsageRefreshing}
+            />
+          ) : null}
+          {tab === "projects" ? (
+            <ProjectsTab
+              todayProjects={data.todayProjects}
+              monthProjects={data.monthProjects}
+            />
+          ) : null}
+          {tab === "models" ? (
+            <ModelsTab
+              todayCostUsd={data.today.estimatedCostUsd}
+              todayModels={data.todayModels}
+              monthModels={data.monthModels}
+            />
+          ) : null}
           {tab === "daily" ? <DailyTab modelRows={data.modelRows} /> : null}
         </>
       ) : null}

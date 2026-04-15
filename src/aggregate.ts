@@ -234,5 +234,5 @@ export function summarizeModelsByDay(
         .map(([model, summary]) => ({ model, ...summary }))
         .sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd || b.events - a.events || a.model.localeCompare(b.model)),
     };
-  });
+  }).reverse();
 }
