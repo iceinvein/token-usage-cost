@@ -4,14 +4,18 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
+import type { ClaudeUsageSample } from "./types";
+
 type ClaudeUsageWindowId = "fiveHour" | "weeklyAllModels" | "weeklySonnet";
 
 export type ClaudeUsageWindow = {
   id: ClaudeUsageWindowId;
   label: string;
   percentLeft: number;
+  percentUsed: number;
   usedText?: string;
   totalText?: string;
+  resetAt?: string;
   resetText?: string;
   detailText: string;
 };
@@ -70,6 +74,16 @@ function normalizeLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function toIsoLocalDateTime(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  const seconds = String(value.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+}
+
 function labelForWindow(id: ClaudeUsageWindowId): string {
   switch (id) {
     case "fiveHour":
@@ -114,6 +128,49 @@ function normalizeResetText(line: string): string {
     .replace(/^Resets\s*/i, "Resets ")
     .replace(/^Resets\s+ts\b/i, "Resets")
     .trim();
+}
+
+function parseResetAt(resetText: string | undefined, fetchedAt: string): string | undefined {
+  if (!resetText) {
+    return undefined;
+  }
+
+  const normalized = resetText
+    .replace(/^Resets\s+/i, "")
+    .replace(/\s*\([^)]+\)\s*$/i, "")
+    .trim();
+  const fetchedDate = new Date(fetchedAt);
+
+  const monthDayMatch = normalized.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+at\s+(.+)$/i);
+  if (monthDayMatch) {
+    const candidate = new Date(`${monthDayMatch[1]} ${monthDayMatch[2]} ${fetchedDate.getFullYear()} ${monthDayMatch[3]}`);
+    if (!Number.isNaN(candidate.getTime())) {
+      return toIsoLocalDateTime(candidate);
+    }
+  }
+
+  const timeOnlyMatch = normalized.match(/^(.+)$/);
+  if (timeOnlyMatch) {
+    const candidate = new Date(fetchedDate);
+    const [hourValue, minuteValue, meridiemValue] = normalized
+      .replace(/\s+/g, "")
+      .match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/i)
+      ?.slice(1) ?? [];
+
+    if (hourValue && meridiemValue) {
+      let hours = Number.parseInt(hourValue, 10) % 12;
+      if (meridiemValue.toLowerCase() === "pm") {
+        hours += 12;
+      }
+      candidate.setHours(hours, minuteValue ? Number.parseInt(minuteValue, 10) : 0, 0, 0);
+      if (candidate.getTime() <= fetchedDate.getTime()) {
+        candidate.setDate(candidate.getDate() + 1);
+      }
+      return toIsoLocalDateTime(candidate);
+    }
+  }
+
+  return undefined;
 }
 
 function parseUsageLines(output: string): ClaudeUsageSnapshot {
@@ -167,6 +224,8 @@ function parseUsageLines(output: string): ClaudeUsageSnapshot {
       id,
       label: labelForWindow(id),
       percentLeft,
+      percentUsed: 100 - percentLeft,
+      resetAt: parseResetAt(resetText, fetchedAt),
       resetText,
       detailText: `${100 - percentLeft}% used`,
     });
@@ -201,6 +260,8 @@ function parseUsageLines(output: string): ClaudeUsageSnapshot {
         id,
         label: labelForWindow(id),
         percentLeft,
+        percentUsed: 100 - percentLeft,
+        resetAt: parseResetAt(resetLine ? normalizeResetText(resetLine) : undefined, fetchedAt),
         resetText: resetLine ? normalizeResetText(resetLine) : undefined,
         detailText: percentUsedLine ?? percentLeftLine ?? line,
       });
@@ -232,7 +293,9 @@ function isClaudeUsageWindow(value: unknown): value is ClaudeUsageWindow {
   return typeof candidate.id === "string"
     && typeof candidate.label === "string"
     && typeof candidate.percentLeft === "number"
+    && typeof candidate.percentUsed === "number"
     && typeof candidate.detailText === "string"
+    && (candidate.resetAt === undefined || typeof candidate.resetAt === "string")
     && (candidate.resetText === undefined || typeof candidate.resetText === "string");
 }
 
@@ -324,4 +387,22 @@ export async function refreshPersistedClaudeUsageSnapshot(
   const snapshot = await fetchClaudeUsageSnapshot();
   await persistClaudeUsageSnapshot(snapshot, snapshotPath);
   return snapshot;
+}
+
+export function toClaudeUsageSamples(snapshot: ClaudeUsageSnapshot): ClaudeUsageSample[] {
+  if (snapshot.status !== "available") {
+    return [];
+  }
+
+  return snapshot.windows.map((window) => ({
+    sampleKey: `${window.id}:${window.resetAt ?? "unknown"}:${snapshot.fetchedAt}`,
+    fetchedAt: snapshot.fetchedAt,
+    windowKind: window.id,
+    label: window.label,
+    percentLeft: window.percentLeft,
+    percentUsed: window.percentUsed,
+    resetAt: window.resetAt,
+    resetText: window.resetText,
+    detailText: window.detailText,
+  }));
 }

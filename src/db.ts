@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { Database } from "bun:sqlite";
 
-import type { IngestStats, UsageEvent } from "./types";
+import type { ClaudeUsageSample, IngestStats, UsageEvent } from "./types";
 
 export function defaultDatabasePath(): string {
   return join(homedir(), ".local", "share", "claude-cost", "usage.sqlite");
@@ -52,6 +52,21 @@ export async function ensureDatabase(dbPath = defaultDatabasePath()): Promise<Da
     CREATE INDEX IF NOT EXISTS idx_usage_events_timestamp ON usage_events(timestamp);
     CREATE INDEX IF NOT EXISTS idx_usage_events_project ON usage_events(project);
     CREATE INDEX IF NOT EXISTS idx_usage_events_model ON usage_events(model);
+
+    CREATE TABLE IF NOT EXISTS claude_usage_samples (
+      sample_key TEXT PRIMARY KEY,
+      fetched_at TEXT NOT NULL,
+      window_kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      percent_left INTEGER NOT NULL,
+      percent_used INTEGER NOT NULL,
+      reset_at TEXT,
+      reset_text TEXT,
+      detail_text TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_claude_usage_samples_kind_reset
+      ON claude_usage_samples(window_kind, reset_at, fetched_at);
   `);
 
   for (const statement of [
@@ -308,6 +323,113 @@ export function readEventsForRange(
 export function readEventCount(db: Database): number {
   const row = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM usage_events").get();
   return row?.count ?? 0;
+}
+
+export function insertClaudeUsageSamples(db: Database, samples: ClaudeUsageSample[]): number {
+  if (samples.length === 0) {
+    return 0;
+  }
+
+  const insertSample = db.query(`
+    INSERT OR REPLACE INTO claude_usage_samples (
+      sample_key,
+      fetched_at,
+      window_kind,
+      label,
+      percent_left,
+      percent_used,
+      reset_at,
+      reset_text,
+      detail_text
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const transaction = db.transaction(() => {
+    for (const sample of samples) {
+      insertSample.run(
+        sample.sampleKey,
+        sample.fetchedAt,
+        sample.windowKind,
+        sample.label,
+        sample.percentLeft,
+        sample.percentUsed,
+        sample.resetAt ?? null,
+        sample.resetText ?? null,
+        sample.detailText,
+      );
+    }
+  });
+
+  transaction();
+  return samples.length;
+}
+
+export function readClaudeUsageSamples(
+  db: Database,
+  windowKind?: ClaudeUsageSample["windowKind"],
+): ClaudeUsageSample[] {
+  const rows = (windowKind
+    ? db.query<{
+        sample_key: string;
+        fetched_at: string;
+        window_kind: ClaudeUsageSample["windowKind"];
+        label: string;
+        percent_left: number;
+        percent_used: number;
+        reset_at: string | null;
+        reset_text: string | null;
+        detail_text: string;
+      }, [ClaudeUsageSample["windowKind"]]>(`
+        SELECT
+          sample_key,
+          fetched_at,
+          window_kind,
+          label,
+          percent_left,
+          percent_used,
+          reset_at,
+          reset_text,
+          detail_text
+        FROM claude_usage_samples
+        WHERE window_kind = ?
+        ORDER BY fetched_at ASC
+      `).all(windowKind)
+    : db.query<{
+        sample_key: string;
+        fetched_at: string;
+        window_kind: ClaudeUsageSample["windowKind"];
+        label: string;
+        percent_left: number;
+        percent_used: number;
+        reset_at: string | null;
+        reset_text: string | null;
+        detail_text: string;
+      }, []>(`
+        SELECT
+          sample_key,
+          fetched_at,
+          window_kind,
+          label,
+          percent_left,
+          percent_used,
+          reset_at,
+          reset_text,
+          detail_text
+        FROM claude_usage_samples
+        ORDER BY fetched_at ASC
+      `).all()) ?? [];
+
+  return rows.map((row) => ({
+    sampleKey: row.sample_key,
+    fetchedAt: row.fetched_at,
+    windowKind: row.window_kind,
+    label: row.label,
+    percentLeft: row.percent_left,
+    percentUsed: row.percent_used,
+    resetAt: row.reset_at ?? undefined,
+    resetText: row.reset_text ?? undefined,
+    detailText: row.detail_text,
+  }));
 }
 
 export function emptyIngestStats(): IngestStats {

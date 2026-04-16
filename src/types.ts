@@ -94,3 +94,32 @@ export type ProjectSummary = {
   totalInputTokens: number;
   totalOutputTokens: number;
 };
+
+export type ClaudeUsageSample = {
+  sampleKey: string;
+  fetchedAt: string;
+  windowKind: "fiveHour" | "weeklyAllModels" | "weeklySonnet";
+  label: string;
+  percentLeft: number;
+  percentUsed: number;
+  resetAt?: string;
+  resetText?: string;
+  detailText: string;
+};
+
+export type ClaudeFiveHourEstimate = {
+  fetchedAt: string;
+  resetAt: string;
+  windowStartAt: string;
+  percentLeft: number;
+  percentUsed: number;
+  observedTokens: number;
+  observedCostUsd: number;
+  observedEvents: number;
+  estimatedFullWindowTokens: number;
+  estimatedFullWindowCostUsd: number;
+  estimatedRemainingTokens: number;
+  estimatedRemainingCostUsd: number;
+};
+
+export type ClaudeFiveHourEstimateHistory = ClaudeFiveHourEstimate[];

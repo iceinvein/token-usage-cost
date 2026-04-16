@@ -2,17 +2,22 @@ import React, { memo, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 
 import {
+  toClaudeUsageSamples,
   readClaudeUsageSnapshot,
   refreshPersistedClaudeUsageSnapshot,
   type ClaudeUsageSnapshot,
   type ClaudeUsageWindow,
 } from "./claude-usage";
+import { ensureDatabase, insertClaudeUsageSamples } from "./db";
 import {
   formatLocalTimestamp,
+  loadClaudeFiveHourEstimate,
+  loadClaudeFiveHourHistory,
   loadDashboardData,
   type DashboardData,
   type DashboardSourceFilter,
 } from "./dashboard-data";
+import type { ClaudeFiveHourEstimate, ClaudeFiveHourEstimateHistory } from "./types";
 
 type DashboardAppProps = {
   root: string;
@@ -203,6 +208,52 @@ function UsageIndicator(props: {
   );
 }
 
+function EstimateCard(props: { estimate: ClaudeFiveHourEstimate }) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
+      <Text bold color="green">5-hour Window Estimate</Text>
+      <Text dimColor>{`Observed ${props.estimate.percentUsed}% used since ${formatLocalTimestamp(new Date(props.estimate.windowStartAt))}`}</Text>
+      <Text>{`Observed  ${formatUsd(props.estimate.observedCostUsd)} / ${formatNumber(props.estimate.observedTokens)} tokens / ${formatNumber(props.estimate.observedEvents)} events`}</Text>
+      <Text>{`Full est. ${formatUsd(props.estimate.estimatedFullWindowCostUsd)} / ${formatNumber(props.estimate.estimatedFullWindowTokens)} tokens`}</Text>
+      <Text>{`Left est. ${formatUsd(props.estimate.estimatedRemainingCostUsd)} / ${formatNumber(props.estimate.estimatedRemainingTokens)} tokens`}</Text>
+      <Text dimColor>{`Resets ${formatLocalTimestamp(new Date(props.estimate.resetAt))}`}</Text>
+    </Box>
+  );
+}
+
+function EstimateHistoryTable(props: { history: ClaudeFiveHourEstimateHistory }) {
+  return (
+    <Box flexDirection="column">
+      <Box marginBottom={1}>
+        <Box width={19}><Text dimColor>Reset</Text></Box>
+        <Box width={9}><Text dimColor>% used</Text></Box>
+        <Box width={12}><Text dimColor>Observed</Text></Box>
+        <Box width={14}><Text dimColor>Full est.</Text></Box>
+        <Box width={14}><Text dimColor>Left est.</Text></Box>
+      </Box>
+      {props.history.map((estimate) => (
+        <Box key={estimate.resetAt}>
+          <Box width={19}>
+            <Text>{formatLocalTimestamp(new Date(estimate.resetAt)).slice(5, 16)}</Text>
+          </Box>
+          <Box width={9}>
+            <Text>{`${estimate.percentUsed}%`}</Text>
+          </Box>
+          <Box width={12}>
+            <Text>{formatUsd(estimate.observedCostUsd)}</Text>
+          </Box>
+          <Box width={14}>
+            <Text>{`${formatUsd(estimate.estimatedFullWindowCostUsd)} ${formatCompactNumber(estimate.estimatedFullWindowTokens)}`}</Text>
+          </Box>
+          <Box width={14}>
+            <Text>{`${formatUsd(estimate.estimatedRemainingCostUsd)} ${formatCompactNumber(estimate.estimatedRemainingTokens)}`}</Text>
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 function ClaudeUsageCard(props: { window: ClaudeUsageWindow; color?: string }) {
   const filled = fillWidth(props.window.percentLeft, 100, 22);
   const empty = 22 - filled;
@@ -229,7 +280,7 @@ function ClaudeUsageCard(props: { window: ClaudeUsageWindow; color?: string }) {
       </Box>
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>{usageText}</Text>
-        <Text dimColor>{props.window.resetText ? `Resets ${props.window.resetText}` : "Reset not provided by Claude"}</Text>
+        <Text dimColor>{props.window.resetText ? `${props.window.resetText}` : "Reset not provided by Claude"}</Text>
       </Box>
     </Box>
   );
@@ -303,6 +354,8 @@ const OverviewTab = memo(function OverviewTab(props: {
   dailyRows: DashboardDailyRows;
   claudeUsage: ClaudeUsageSnapshot | null;
   claudeUsageRefreshing: boolean;
+  claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
+  claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
 }) {
   const maxDaily = Math.max(...props.dailyRows.map((row) => row.estimatedCostUsd), 0);
   const sourceRows = DASHBOARD_SOURCES.map((source) => {
@@ -406,6 +459,20 @@ const OverviewTab = memo(function OverviewTab(props: {
           ) : (
             <Text dimColor>{props.claudeUsageRefreshing ? "Refreshing Claude usage in background..." : "Loading Claude usage..."}</Text>
           )}
+        </Section>
+      ) : null}
+
+      {(props.source === "all" || props.source === "claude-code") && props.claudeFiveHourEstimate ? (
+        <Section title="Claude 5-hour Estimate" color="green">
+          <EstimateCard estimate={props.claudeFiveHourEstimate} />
+          {props.claudeFiveHourHistory.length > 0 ? (
+            <Box marginTop={1} flexDirection="column">
+              <Text dimColor>Recent windows</Text>
+              <Box marginTop={1}>
+                <EstimateHistoryTable history={props.claudeFiveHourHistory} />
+              </Box>
+            </Box>
+          ) : null}
         </Section>
       ) : null}
 
@@ -561,6 +628,8 @@ export function DashboardApp(props: DashboardAppProps) {
   const [refreshedAt, setRefreshedAt] = useState<string>("");
   const [claudeUsage, setClaudeUsage] = useState<ClaudeUsageSnapshot | null>(null);
   const [claudeUsageRefreshing, setClaudeUsageRefreshing] = useState(false);
+  const [claudeFiveHourEstimate, setClaudeFiveHourEstimate] = useState<ClaudeFiveHourEstimate | null>(null);
+  const [claudeFiveHourHistory, setClaudeFiveHourHistory] = useState<ClaudeFiveHourEstimateHistory>([]);
   const dataSignatureRef = useRef<string>("");
   const claudeUsageSignatureRef = useRef<string>("");
   const lastClaudeUsageRefreshMsRef = useRef<number>(0);
@@ -618,6 +687,8 @@ export function DashboardApp(props: DashboardAppProps) {
       if (nextSignature !== dataSignatureRef.current) {
         dataSignatureRef.current = nextSignature;
         setData(nextData);
+        setClaudeFiveHourEstimate(nextData.claudeFiveHourEstimate);
+        setClaudeFiveHourHistory(nextData.claudeFiveHourHistory);
       }
       setRefreshedAt(formatLocalTimestamp());
     } catch (nextError) {
@@ -637,7 +708,15 @@ export function DashboardApp(props: DashboardAppProps) {
     setClaudeUsageRefreshing(true);
     try {
       const nextUsage = await refreshPersistedClaudeUsageSnapshot();
+      const db = await ensureDatabase(props.dbPath);
+      try {
+        insertClaudeUsageSamples(db, toClaudeUsageSamples(nextUsage));
+      } finally {
+        db.close();
+      }
       lastClaudeUsageRefreshMsRef.current = Date.now();
+      setClaudeFiveHourEstimate(await loadClaudeFiveHourEstimate(props.dbPath));
+      setClaudeFiveHourHistory(await loadClaudeFiveHourHistory(props.dbPath));
       const nextSignature = JSON.stringify(nextUsage);
       if (nextSignature !== claudeUsageSignatureRef.current) {
         claudeUsageSignatureRef.current = nextSignature;
@@ -737,6 +816,8 @@ export function DashboardApp(props: DashboardAppProps) {
               dailyRows={data.dailyRows}
               claudeUsage={claudeUsage}
               claudeUsageRefreshing={claudeUsageRefreshing}
+              claudeFiveHourEstimate={claudeFiveHourEstimate}
+              claudeFiveHourHistory={claudeFiveHourHistory}
             />
           ) : null}
           {tab === "projects" ? (

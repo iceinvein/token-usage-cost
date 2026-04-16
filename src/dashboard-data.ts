@@ -1,7 +1,8 @@
 import { summarizeDay, summarizeModelsByDay, summarizeProjects, summarizeRange } from "./aggregate";
-import { defaultDatabasePath, ensureDatabase, readEventsForRange } from "./db";
+import { defaultDatabasePath, ensureDatabase, readClaudeUsageSamples, readEventsForRange } from "./db";
 import { ingestClaudeUsage, ingestCodexUsage, ingestCursorUsage } from "./ingest";
 import { loadPricing } from "./pricing";
+import type { ClaudeFiveHourEstimate, ClaudeFiveHourEstimateHistory, ClaudeUsageSample } from "./types";
 
 export type DashboardSourceFilter = "all" | "claude-code" | "codex-cli" | "cursor";
 
@@ -50,7 +51,124 @@ export type DashboardData = {
   monthModels: ReturnType<typeof summarizeRange>["byModel"];
   dailyRows: Array<ReturnType<typeof summarizeDay>>;
   modelRows: ReturnType<typeof summarizeModelsByDay>;
+  claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
+  claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
 };
+
+function subtractHours(timestamp: string, hours: number): string {
+  const value = new Date(timestamp);
+  value.setHours(value.getHours() - hours);
+  return value.toISOString().slice(0, 19);
+}
+
+function buildClaudeFiveHourEstimate(
+  samples: ClaudeUsageSample[],
+  events: ReturnType<typeof readEventsForRange>,
+): ClaudeFiveHourEstimate | null {
+  const latestSample = [...samples]
+    .filter((sample) => sample.windowKind === "fiveHour" && sample.resetAt && sample.percentUsed > 0)
+    .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))
+    .at(-1);
+
+  if (!latestSample?.resetAt) {
+    return null;
+  }
+
+  const windowStartAt = subtractHours(latestSample.resetAt, 5);
+  const observedEvents = events.filter((event) =>
+    event.source === "claude-code"
+    && event.timestamp >= windowStartAt
+    && event.timestamp <= latestSample.fetchedAt,
+  );
+  const observedTokens = observedEvents.reduce((sum, event) => sum + event.totalTokens, 0);
+  const observedCostUsd = observedEvents.reduce((sum, event) => sum + event.estimatedCostUsd, 0);
+  const observedEventCount = observedEvents.length;
+
+  if (latestSample.percentUsed <= 0) {
+    return null;
+  }
+
+  const estimatedFullWindowTokens = Math.round((observedTokens / latestSample.percentUsed) * 100);
+  const estimatedFullWindowCostUsd = observedCostUsd / latestSample.percentUsed * 100;
+  const estimatedRemainingTokens = Math.max(0, estimatedFullWindowTokens - observedTokens);
+  const estimatedRemainingCostUsd = Math.max(0, estimatedFullWindowCostUsd - observedCostUsd);
+
+  return {
+    fetchedAt: latestSample.fetchedAt,
+    resetAt: latestSample.resetAt,
+    windowStartAt,
+    percentLeft: latestSample.percentLeft,
+    percentUsed: latestSample.percentUsed,
+    observedTokens,
+    observedCostUsd,
+    observedEvents: observedEventCount,
+    estimatedFullWindowTokens,
+    estimatedFullWindowCostUsd,
+    estimatedRemainingTokens,
+    estimatedRemainingCostUsd,
+  };
+}
+
+function buildClaudeFiveHourEstimateHistory(
+  samples: ClaudeUsageSample[],
+  events: ReturnType<typeof readEventsForRange>,
+  limit = 6,
+): ClaudeFiveHourEstimateHistory {
+  const latestSamplesByReset = new Map<string, ClaudeUsageSample>();
+
+  for (const sample of samples
+    .filter((candidate) => candidate.windowKind === "fiveHour" && candidate.resetAt && candidate.percentUsed > 0)
+    .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))) {
+    latestSamplesByReset.set(sample.resetAt!, sample);
+  }
+
+  return [...latestSamplesByReset.values()]
+    .sort((a, b) => b.resetAt!.localeCompare(a.resetAt!))
+    .slice(0, limit)
+    .map((sample) => buildClaudeFiveHourEstimate([sample], events))
+    .filter((estimate): estimate is ClaudeFiveHourEstimate => estimate !== null);
+}
+
+export async function loadClaudeFiveHourEstimate(dbPath = defaultDatabasePath()): Promise<ClaudeFiveHourEstimate | null> {
+  const db = await ensureDatabase(dbPath);
+  try {
+    const samples = readClaudeUsageSamples(db, "fiveHour");
+    const latestSample = [...samples]
+      .filter((sample) => sample.resetAt)
+      .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))
+      .at(-1);
+    if (!latestSample?.resetAt) {
+      return null;
+    }
+
+    const windowStartAt = subtractHours(latestSample.resetAt, 5);
+    const events = readEventsForRange(db, windowStartAt, addDays(todayInLocalTimezone(), 1) + "T00:00:00");
+    return buildClaudeFiveHourEstimate(samples, events);
+  } finally {
+    db.close();
+  }
+}
+
+export async function loadClaudeFiveHourHistory(
+  dbPath = defaultDatabasePath(),
+): Promise<ClaudeFiveHourEstimateHistory> {
+  const db = await ensureDatabase(dbPath);
+  try {
+    const samples = readClaudeUsageSamples(db, "fiveHour");
+    const earliestResetAt = [...samples]
+      .filter((sample) => sample.resetAt)
+      .sort((a, b) => a.resetAt!.localeCompare(b.resetAt!))
+      .at(0)?.resetAt;
+    if (!earliestResetAt) {
+      return [];
+    }
+
+    const events = readEventsForRange(db, subtractHours(earliestResetAt, 5), addDays(todayInLocalTimezone(), 1) + "T00:00:00");
+    return buildClaudeFiveHourEstimateHistory(samples, events);
+  } finally {
+    db.close();
+  }
+}
 
 export async function loadDashboardData(args: {
   root: string;
@@ -108,6 +226,8 @@ export async function loadDashboardData(args: {
       dailyRows.push(summarizeDay(events, current, pricing));
     }
     dailyRows.reverse();
+    const claudeUsageSamples = readClaudeUsageSamples(db, "fiveHour");
+    const claudeFiveHourHistory = buildClaudeFiveHourEstimateHistory(claudeUsageSamples, rawEvents);
 
     return {
       date: args.date,
@@ -122,6 +242,8 @@ export async function loadDashboardData(args: {
       monthModels: month.byModel,
       dailyRows,
       modelRows: summarizeModelsByDay(events, weekStart, args.date),
+      claudeFiveHourEstimate: buildClaudeFiveHourEstimate(claudeUsageSamples, rawEvents),
+      claudeFiveHourHistory,
     };
   } finally {
     db.close();
