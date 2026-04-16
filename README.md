@@ -1,4 +1,4 @@
-# claude-cost
+# token-usage-cost
 
 Minimal Bun CLI for tracking local AI coding assistant usage and estimating cost from model pricing when local token data is available.
 
