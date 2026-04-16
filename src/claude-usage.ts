@@ -63,6 +63,70 @@ export function defaultClaudeUsageSnapshotPath(): string {
   return join(homedir(), ".local", "share", "claude-cost", "claude-usage.json");
 }
 
+function renderTerminalOutput(raw: string): string {
+  const rows = 120;
+  const cols = 300;
+  const buffer: string[][] = Array.from({ length: rows }, () => Array(cols).fill(" "));
+  let row = 0;
+  let col = 0;
+
+  let i = 0;
+  while (i < raw.length) {
+    if (raw[i] === "\x1b") {
+      if (raw[i + 1] === "[") {
+        const csiMatch = raw.slice(i + 2).match(/^([0-9;]*)([@-~])/);
+        if (csiMatch) {
+          const params = csiMatch[1]!;
+          const cmd = csiMatch[2]!;
+          const n = Number.parseInt(params, 10) || 1;
+          i += 2 + csiMatch[0].length;
+          switch (cmd) {
+            case "A": row = Math.max(0, row - n); break;
+            case "B": row = Math.min(rows - 1, row + n); break;
+            case "C": col = Math.min(cols - 1, col + n); break;
+            case "D": col = Math.max(0, col - n); break;
+            case "H": case "f": {
+              const parts = params.split(";");
+              row = Math.max(0, Math.min(rows - 1, (Number.parseInt(parts[0]!, 10) || 1) - 1));
+              col = Math.max(0, Math.min(cols - 1, (Number.parseInt(parts[1]!, 10) || 1) - 1));
+              break;
+            }
+            default: break;
+          }
+          continue;
+        }
+      }
+      // Skip OSC and other escape sequences.
+      if (raw[i + 1] === "]") {
+        const end = raw.indexOf("\x07", i);
+        const altEnd = raw.indexOf("\x1b\\", i);
+        const closest = end >= 0 && (altEnd < 0 || end < altEnd) ? end + 1 : altEnd >= 0 ? altEnd + 2 : raw.length;
+        i = closest;
+        continue;
+      }
+      i += 2;
+      continue;
+    }
+    if (raw[i] === "\r") { col = 0; i += 1; continue; }
+    if (raw[i] === "\n") { row = Math.min(rows - 1, row + 1); i += 1; continue; }
+
+    if (raw.charCodeAt(i) >= 32 && row < rows && col < cols) {
+      // Handle multi-byte UTF-8 characters: consume the full code point.
+      const cp = raw.codePointAt(i)!;
+      const ch = String.fromCodePoint(cp);
+      buffer[row]![col] = ch;
+      col = Math.min(cols - 1, col + 1);
+      i += ch.length;
+    } else {
+      i += 1;
+    }
+  }
+
+  return buffer
+    .map((line) => line.join("").trimEnd())
+    .join("\n");
+}
+
 function stripAnsi(value: string): string {
   return value
     .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "")
@@ -141,7 +205,12 @@ function parseResetAt(resetText: string | undefined, fetchedAt: string): string 
     .trim();
   const fetchedDate = new Date(fetchedAt);
 
-  const durationMatch = normalized.match(/^(?:(\d+)h)?(?:(\d+)m)?$/i);
+  const durationText = normalized.replace(/^in\s+/i, "");
+  const compactMatch = durationText.match(/^(?:(\d+)h)?(?:(\d+)m)?$/i);
+  const verboseMatch = !compactMatch?.[1] && !compactMatch?.[2]
+    ? durationText.match(/^(?:(\d+)\s*(?:hr|hours?)\s*)?(?:(\d+)\s*(?:min|minutes?)\s*)?$/i)
+    : null;
+  const durationMatch = (compactMatch?.[1] || compactMatch?.[2]) ? compactMatch : verboseMatch;
   if (durationMatch && (durationMatch[1] || durationMatch[2])) {
     const hours = durationMatch[1] ? Number.parseInt(durationMatch[1], 10) : 0;
     const minutes = durationMatch[2] ? Number.parseInt(durationMatch[2], 10) : 0;
@@ -151,7 +220,10 @@ function parseResetAt(resetText: string | undefined, fetchedAt: string): string 
 
   const monthDayMatch = normalized.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+at\s+(.+)$/i);
   if (monthDayMatch) {
-    const candidate = new Date(`${monthDayMatch[1]} ${monthDayMatch[2]} ${fetchedDate.getFullYear()} ${monthDayMatch[3]}`);
+    const timeStr = monthDayMatch[3]!
+      .replace(/^(\d{1,2})(am|pm)$/i, "$1:00 $2")
+      .replace(/^(\d{1,2}:\d{2})(am|pm)$/i, "$1 $2");
+    const candidate = new Date(`${monthDayMatch[1]} ${monthDayMatch[2]} ${fetchedDate.getFullYear()} ${timeStr}`);
     if (!Number.isNaN(candidate.getTime())) {
       return toIsoLocalDateTime(candidate);
     }
@@ -182,7 +254,7 @@ function parseResetAt(resetText: string | undefined, fetchedAt: string): string 
 }
 
 function parseUsageLines(output: string): ClaudeUsageSnapshot {
-  const cleaned = stripAnsi(output);
+  const cleaned = renderTerminalOutput(output);
   const lines = cleaned
     .split(/\r?\n/)
     .map(normalizeLine)
@@ -377,6 +449,8 @@ export async function fetchClaudeUsageSnapshot(): Promise<ClaudeUsageSnapshot> {
   }
 
   const combined = `${stdoutText}\n${stderrText}`.trim();
+  const debugPath = join(dirname(defaultClaudeUsageSnapshotPath()), "claude-usage-raw.txt");
+  await writeFile(debugPath, combined, "utf8");
   const snapshot = parseUsageLines(combined);
 
   if (snapshot.status !== "available" && exitCode !== 0 && !snapshot.message) {
