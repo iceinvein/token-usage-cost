@@ -93,9 +93,11 @@ function buildClaudeFiveHourEstimate(
   const estimatedRemainingTokens = Math.max(0, estimatedFullWindowTokens - observedTokens);
   const estimatedRemainingCostUsd = Math.max(0, estimatedFullWindowCostUsd - observedCostUsd);
 
+  const normalizedResetAt = roundToNearestHour(latestSample.resetAt);
+
   return {
     fetchedAt: latestSample.fetchedAt,
-    resetAt: latestSample.resetAt,
+    resetAt: normalizedResetAt,
     windowStartAt,
     percentLeft: latestSample.percentLeft,
     percentUsed: latestSample.percentUsed,
@@ -109,6 +111,19 @@ function buildClaudeFiveHourEstimate(
   };
 }
 
+function roundToNearestHour(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (date.getMinutes() >= 30) {
+    date.setHours(date.getHours() + 1);
+  }
+  date.setMinutes(0, 0, 0);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:00:00`;
+}
+
 function buildClaudeFiveHourEstimateHistory(
   samples: ClaudeUsageSample[],
   events: ReturnType<typeof readEventsForRange>,
@@ -119,7 +134,8 @@ function buildClaudeFiveHourEstimateHistory(
   for (const sample of samples
     .filter((candidate) => candidate.windowKind === "fiveHour" && candidate.resetAt && candidate.percentUsed > 0)
     .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))) {
-    latestSamplesByReset.set(sample.resetAt!, sample);
+    const key = roundToNearestHour(sample.resetAt!);
+    latestSamplesByReset.set(key, sample);
   }
 
   return [...latestSamplesByReset.values()]

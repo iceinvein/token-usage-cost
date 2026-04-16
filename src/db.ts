@@ -10,13 +10,12 @@ export function defaultDatabasePath(): string {
   return join(homedir(), ".local", "share", "claude-cost", "usage.sqlite");
 }
 
-export async function ensureDatabase(dbPath = defaultDatabasePath()): Promise<Database> {
-  await mkdir(dirname(dbPath), { recursive: true });
+const sharedConnections = new Map<string, Database>();
 
-  const db = new Database(dbPath, { create: true });
-  db.exec(`PRAGMA busy_timeout = 5000;`);
+function initDatabase(db: Database): void {
+  db.exec("PRAGMA busy_timeout = 5000;");
   try {
-    db.exec(`PRAGMA journal_mode = WAL;`);
+    db.exec("PRAGMA journal_mode = WAL;");
   } catch {
     // Another process may already hold the database during recovery.
   }
@@ -79,7 +78,20 @@ export async function ensureDatabase(dbPath = defaultDatabasePath()): Promise<Da
       // Column already exists.
     }
   }
+}
 
+export async function ensureDatabase(dbPath = defaultDatabasePath()): Promise<Database> {
+  const existing = sharedConnections.get(dbPath);
+  if (existing) {
+    return existing;
+  }
+
+  await mkdir(dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath, { create: true });
+  initDatabase(db);
+  // Prevent callers from closing the shared connection.
+  db.close = () => {};
+  sharedConnections.set(dbPath, db);
   return db;
 }
 
