@@ -141,6 +141,14 @@ function parseResetAt(resetText: string | undefined, fetchedAt: string): string 
     .trim();
   const fetchedDate = new Date(fetchedAt);
 
+  const durationMatch = normalized.match(/^(?:(\d+)h)?(?:(\d+)m)?$/i);
+  if (durationMatch && (durationMatch[1] || durationMatch[2])) {
+    const hours = durationMatch[1] ? Number.parseInt(durationMatch[1], 10) : 0;
+    const minutes = durationMatch[2] ? Number.parseInt(durationMatch[2], 10) : 0;
+    const candidate = new Date(fetchedDate.getTime() + (hours * 60 + minutes) * 60_000);
+    return toIsoLocalDateTime(candidate);
+  }
+
   const monthDayMatch = normalized.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+at\s+(.+)$/i);
   if (monthDayMatch) {
     const candidate = new Date(`${monthDayMatch[1]} ${monthDayMatch[2]} ${fetchedDate.getFullYear()} ${monthDayMatch[3]}`);
