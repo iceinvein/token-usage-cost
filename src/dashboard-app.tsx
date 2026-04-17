@@ -17,6 +17,7 @@ import {
   type DashboardData,
   type DashboardSourceFilter,
 } from "./dashboard-data";
+import { getPeakHourStatus, type PeakHourStatus } from "./peak-hours";
 import type { ClaudeFiveHourEstimate, ClaudeFiveHourEstimateHistory } from "./types";
 
 type DashboardAppProps = {
@@ -303,11 +304,29 @@ function buildDashboardDataSignature(data: DashboardData): string {
   return JSON.stringify(data);
 }
 
+function PeakHourIndicator(props: { status: PeakHourStatus }) {
+  if (props.status.active) {
+    return (
+      <Box>
+        <Text bold color="yellow">{`● PEAK `}</Text>
+        <Text color="gray">{`${props.status.startLocal}-${props.status.endLocal} local`}</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box>
+      <Text dimColor>{`○ off-peak  next ${props.status.nextStartLocal} local`}</Text>
+    </Box>
+  );
+}
+
 const DashboardHeader = memo(function DashboardHeader(props: {
   date: string;
   source: DashboardSourceFilter;
   watch: boolean;
   intervalSeconds: number;
+  peakHourStatus: PeakHourStatus;
 }) {
   return (
     <Box justifyContent="space-between">
@@ -315,6 +334,8 @@ const DashboardHeader = memo(function DashboardHeader(props: {
         <Text bold color="white">Claude Cost TUI</Text>
         <Text color="gray">  {props.date}</Text>
         <Text color="gray">  {formatSourceFilterLabel(props.source)}</Text>
+        <Text>  </Text>
+        <PeakHourIndicator status={props.peakHourStatus} />
       </Box>
       <Text color="gray">
         {props.watch ? `watch ${props.intervalSeconds}s` : "manual"} | r refresh | tab switch | q quit
@@ -630,6 +651,7 @@ export function DashboardApp(props: DashboardAppProps) {
   const [claudeUsageRefreshing, setClaudeUsageRefreshing] = useState(false);
   const [claudeFiveHourEstimate, setClaudeFiveHourEstimate] = useState<ClaudeFiveHourEstimate | null>(null);
   const [claudeFiveHourHistory, setClaudeFiveHourHistory] = useState<ClaudeFiveHourEstimateHistory>([]);
+  const [peakHourStatus, setPeakHourStatus] = useState<PeakHourStatus>(() => getPeakHourStatus());
   const dataSignatureRef = useRef<string>("");
   const claudeUsageSignatureRef = useRef<string>("");
   const lastClaudeUsageRefreshMsRef = useRef<number>(0);
@@ -771,6 +793,13 @@ export function DashboardApp(props: DashboardAppProps) {
   }, [props.source]);
 
   useEffect(() => {
+    const timer = setInterval(() => {
+      setPeakHourStatus(getPeakHourStatus());
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!props.watch) {
       return;
     }
@@ -791,6 +820,7 @@ export function DashboardApp(props: DashboardAppProps) {
         source={props.source}
         watch={props.watch}
         intervalSeconds={props.intervalSeconds}
+        peakHourStatus={peakHourStatus}
       />
       <DashboardTabs tab={tab} />
 
