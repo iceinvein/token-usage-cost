@@ -61,9 +61,18 @@ async function maybeSync(
 
   const db = await ensureDatabase(dbPath);
   try {
-    await ingestClaudeUsage(db, root, pricing);
-    await ingestCodexUsage(db, codexStatePath, pricing);
-    await ingestCursorUsage(db, undefined, pricing);
+    for (const { label, run } of [
+      { label: "claude", run: () => ingestClaudeUsage(db, root, pricing) },
+      { label: "codex", run: () => ingestCodexUsage(db, codexStatePath, pricing) },
+      { label: "cursor", run: () => ingestCursorUsage(db, undefined, pricing) },
+    ]) {
+      try {
+        await run();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Skipped ${label} ingest: ${message}`);
+      }
+    }
   } finally {
     db.close();
   }

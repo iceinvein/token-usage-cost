@@ -55,6 +55,16 @@ export type DashboardData = {
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
 };
 
+async function safeIngest<T>(run: () => Promise<T>): Promise<T | null> {
+  try {
+    return await run();
+  } catch {
+    // Transient failures (e.g. Codex/Cursor DBs locked by their owning app) must
+    // not take down the dashboard. We rely on previously ingested data instead.
+    return null;
+  }
+}
+
 function subtractHours(timestamp: string, hours: number): string {
   const value = new Date(timestamp);
   value.setHours(value.getHours() - hours);
@@ -200,9 +210,9 @@ export async function loadDashboardData(args: {
   if (args.sync) {
     const db = await ensureDatabase(dbPath);
     try {
-      await ingestClaudeUsage(db, args.root, pricing);
-      await ingestCodexUsage(db, args.codexStatePath, pricing);
-      await ingestCursorUsage(db, undefined, pricing);
+      await safeIngest(() => ingestClaudeUsage(db, args.root, pricing));
+      await safeIngest(() => ingestCodexUsage(db, args.codexStatePath, pricing));
+      await safeIngest(() => ingestCursorUsage(db, undefined, pricing));
     } finally {
       db.close();
     }
