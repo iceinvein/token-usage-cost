@@ -2,6 +2,14 @@
 
 Minimal Bun CLI for tracking local AI coding assistant usage and estimating cost from model pricing when local token data is available.
 
+<p align="center">
+  <img src="./hero.png" alt="token-usage-cost hero" width="900" />
+</p>
+
+<p align="center">
+  Terminal dashboard for local Claude Code, Codex, and Cursor usage with cost and capacity estimates.
+</p>
+
 ## Commands
 
 ```bash
