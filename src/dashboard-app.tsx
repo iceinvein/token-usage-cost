@@ -31,7 +31,7 @@ type DashboardAppProps = {
   source: DashboardSourceFilter;
 };
 
-type TabId = "overview" | "projects" | "models" | "daily";
+type TabId = "overview" | "trend" | "projects" | "models" | "daily";
 
 type DashboardSourceId = Exclude<DashboardSourceFilter, "all">;
 type DashboardToday = DashboardData["today"];
@@ -46,6 +46,7 @@ type DashboardModelRows = DashboardData["modelRows"];
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "trend", label: "Trend" },
   { id: "projects", label: "Projects" },
   { id: "models", label: "Models" },
   { id: "daily", label: "Daily" },
@@ -164,6 +165,22 @@ function RowStats(props: { amount: string; events?: string }) {
       </Box>
       <Box width={16}>
         <Text>{props.events ?? ""}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function SummaryLine(props: { label: string; value: string; detail?: string; color?: string }) {
+  return (
+    <Box marginBottom={1}>
+      <Box width={18}>
+        <Text color="gray">{props.label}</Text>
+      </Box>
+      <Box width={14}>
+        <Text color={props.color ?? "white"}>{props.value}</Text>
+      </Box>
+      <Box flexGrow={1}>
+        <Text dimColor>{props.detail ?? ""}</Text>
       </Box>
     </Box>
   );
@@ -373,12 +390,15 @@ const OverviewTab = memo(function OverviewTab(props: {
   week: DashboardWeek;
   month: DashboardMonth;
   dailyRows: DashboardDailyRows;
+  todayProjects: DashboardTodayProjects;
+  monthProjects: DashboardMonthProjects;
+  todayModels: DashboardTodayModels;
+  monthModels: DashboardMonthModels;
   claudeUsage: ClaudeUsageSnapshot | null;
   claudeUsageRefreshing: boolean;
   claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
 }) {
-  const maxDaily = Math.max(...props.dailyRows.map((row) => row.estimatedCostUsd), 0);
   const sourceRows = DASHBOARD_SOURCES.map((source) => {
     const today = props.today.bySource.find((row) => row.source === source);
     const month = props.month.bySource.find((row) => row.source === source);
@@ -395,6 +415,21 @@ const OverviewTab = memo(function OverviewTab(props: {
       monthEvents: month?.events ?? 0,
     };
   });
+  const elapsedMonthDays = Math.max(1, Number.parseInt(props.today.date.slice(8, 10), 10) || 1);
+  const monthAverageCost = props.month.estimatedCostUsd / elapsedMonthDays;
+  const weekAverageCost = props.week.estimatedCostUsd / Math.max(1, props.dailyRows.length);
+  const daysInMonth = new Date(
+    Number.parseInt(props.today.date.slice(0, 4), 10),
+    Number.parseInt(props.today.date.slice(5, 7), 10),
+    0,
+  ).getDate();
+  const projectedMonthCost = monthAverageCost * daysInMonth;
+  const yesterday = props.dailyRows[1] ?? null;
+  const todayVsYesterday = yesterday ? props.today.estimatedCostUsd - yesterday.estimatedCostUsd : null;
+  const topProjectToday = props.todayProjects[0];
+  const topProjectMonth = props.monthProjects[0];
+  const topModelToday = props.todayModels[0];
+  const topModelMonth = props.monthModels[0];
 
   return (
     <>
@@ -497,6 +532,106 @@ const OverviewTab = memo(function OverviewTab(props: {
         </Section>
       ) : null}
 
+      <Section title="Pace" color="blue">
+        <SummaryLine
+          label="Week avg/day"
+          value={formatUsd(weekAverageCost)}
+          detail={`${formatNumber(props.week.events)} events this week`}
+          color="blue"
+        />
+        <SummaryLine
+          label="Month avg/day"
+          value={formatUsd(monthAverageCost)}
+          detail={`${elapsedMonthDays}/${daysInMonth} days elapsed`}
+          color="blue"
+        />
+        <SummaryLine
+          label="Projected month"
+          value={formatUsd(projectedMonthCost)}
+          detail={`at current ${formatUsd(monthAverageCost)}/day pace`}
+          color="blue"
+        />
+        <SummaryLine
+          label="Web searches"
+          value={formatNumber(props.today.totalWebSearchRequests)}
+          detail="requests recorded today"
+          color="blue"
+        />
+        {todayVsYesterday !== null ? (
+          <SummaryLine
+            label="Vs yesterday"
+            value={`${todayVsYesterday >= 0 ? "+" : "-"}${formatUsd(Math.abs(todayVsYesterday))}`}
+            detail={`${formatUsd(props.today.estimatedCostUsd)} today vs ${formatUsd(yesterday.estimatedCostUsd)} yesterday`}
+            color={todayVsYesterday >= 0 ? "yellow" : "green"}
+          />
+        ) : null}
+      </Section>
+
+      <Section title="Leaders" color="cyan">
+        <SummaryLine
+          label="Top project today"
+          value={topProjectToday ? formatUsd(topProjectToday.estimatedCostUsd) : "n/a"}
+          detail={topProjectToday ? `${topProjectToday.displayProject} • ${formatNumber(topProjectToday.events)} events` : "No project usage today"}
+          color="cyan"
+        />
+        <SummaryLine
+          label="Top project month"
+          value={topProjectMonth ? formatUsd(topProjectMonth.estimatedCostUsd) : "n/a"}
+          detail={topProjectMonth ? `${topProjectMonth.displayProject} • ${formatNumber(topProjectMonth.events)} events` : "No project usage this month"}
+          color="cyan"
+        />
+        <SummaryLine
+          label="Top model today"
+          value={topModelToday ? formatUsd(topModelToday.estimatedCostUsd) : "n/a"}
+          detail={topModelToday ? `${topModelToday.model} • ${formatNumber(topModelToday.events)} events` : "No model usage today"}
+          color="cyan"
+        />
+        <SummaryLine
+          label="Top model month"
+          value={topModelMonth ? formatUsd(topModelMonth.estimatedCostUsd) : "n/a"}
+          detail={topModelMonth ? `${topModelMonth.model} • ${formatNumber(topModelMonth.events)} events` : "No model usage this month"}
+          color="cyan"
+        />
+      </Section>
+    </>
+  );
+});
+
+const TrendTab = memo(function TrendTab(props: {
+  today: DashboardToday;
+  week: DashboardWeek;
+  month: DashboardMonth;
+  dailyRows: DashboardDailyRows;
+}) {
+  const maxDaily = Math.max(...props.dailyRows.map((row) => row.estimatedCostUsd), 0);
+  const highestDay = props.dailyRows.reduce<DashboardDailyRows[number] | null>(
+    (best, row) => (!best || row.estimatedCostUsd > best.estimatedCostUsd ? row : best),
+    null,
+  );
+  const lowestDay = props.dailyRows.reduce<DashboardDailyRows[number] | null>(
+    (best, row) => (!best || row.estimatedCostUsd < best.estimatedCostUsd ? row : best),
+    null,
+  );
+  const activeDays = props.dailyRows.filter((row) => row.events > 0);
+
+  return (
+    <>
+      <Box marginTop={1} gap={1}>
+        <MetricCard label="Today" value={formatUsd(props.today.estimatedCostUsd)} detail={`${formatNumber(props.today.events)} events`} color="cyan" />
+        <MetricCard
+          label="7-Day Avg"
+          value={formatUsd(props.week.estimatedCostUsd / Math.max(1, props.dailyRows.length))}
+          detail={`${formatNumber(props.week.events)} events`}
+          color="green"
+        />
+        <MetricCard
+          label="Active Days"
+          value={`${activeDays.length}/${props.dailyRows.length}`}
+          detail={`${formatUsd(props.month.estimatedCostUsd)} month to date`}
+          color="yellow"
+        />
+      </Box>
+
       <Section title="7-Day Trend" color="cyan">
         {props.dailyRows.map((row) => (
           <DataRow
@@ -507,6 +642,21 @@ const OverviewTab = memo(function OverviewTab(props: {
             color="cyan"
           />
         ))}
+      </Section>
+
+      <Section title="Week Extremes" color="green">
+        <SummaryLine
+          label="Highest day"
+          value={highestDay ? formatUsd(highestDay.estimatedCostUsd) : "n/a"}
+          detail={highestDay ? `${highestDay.date} • ${formatNumber(highestDay.events)} events` : "No usage in range"}
+          color="green"
+        />
+        <SummaryLine
+          label="Lowest day"
+          value={lowestDay ? formatUsd(lowestDay.estimatedCostUsd) : "n/a"}
+          detail={lowestDay ? `${lowestDay.date} • ${formatNumber(lowestDay.events)} events` : "No usage in range"}
+          color="green"
+        />
       </Section>
     </>
   );
@@ -681,9 +831,10 @@ export function DashboardApp(props: DashboardAppProps) {
     }
 
     if (input === "1") setTab("overview");
-    if (input === "2") setTab("projects");
-    if (input === "3") setTab("models");
-    if (input === "4") setTab("daily");
+    if (input === "2") setTab("trend");
+    if (input === "3") setTab("projects");
+    if (input === "4") setTab("models");
+    if (input === "5") setTab("daily");
   });
 
   async function refresh(forceClaudeUsage = false) {
@@ -844,10 +995,22 @@ export function DashboardApp(props: DashboardAppProps) {
               week={data.week}
               month={data.month}
               dailyRows={data.dailyRows}
+              todayProjects={data.todayProjects}
+              monthProjects={data.monthProjects}
+              todayModels={data.todayModels}
+              monthModels={data.monthModels}
               claudeUsage={claudeUsage}
               claudeUsageRefreshing={claudeUsageRefreshing}
               claudeFiveHourEstimate={claudeFiveHourEstimate}
               claudeFiveHourHistory={claudeFiveHourHistory}
+            />
+          ) : null}
+          {tab === "trend" ? (
+            <TrendTab
+              today={data.today}
+              week={data.week}
+              month={data.month}
+              dailyRows={data.dailyRows}
             />
           ) : null}
           {tab === "projects" ? (
