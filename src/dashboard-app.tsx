@@ -343,7 +343,6 @@ const DashboardHeader = memo(function DashboardHeader(props: {
   source: DashboardSourceFilter;
   watch: boolean;
   intervalSeconds: number;
-  peakHourStatus: PeakHourStatus;
 }) {
   return (
     <Box justifyContent="space-between">
@@ -351,8 +350,6 @@ const DashboardHeader = memo(function DashboardHeader(props: {
         <Text bold color="white">Claude Cost TUI</Text>
         <Text color="gray">  {props.date}</Text>
         <Text color="gray">  {formatSourceFilterLabel(props.source)}</Text>
-        <Text>  </Text>
-        <PeakHourIndicator status={props.peakHourStatus} />
       </Box>
       <Text color="gray">
         {props.watch ? `watch ${props.intervalSeconds}s` : "manual"} | r refresh | tab switch | q quit
@@ -398,6 +395,7 @@ const OverviewTab = memo(function OverviewTab(props: {
   claudeUsageRefreshing: boolean;
   claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
+  peakHourStatus: PeakHourStatus;
 }) {
   const sourceRows = DASHBOARD_SOURCES.map((source) => {
     const today = props.today.bySource.find((row) => row.source === source);
@@ -520,7 +518,10 @@ const OverviewTab = memo(function OverviewTab(props: {
 
       {(props.source === "all" || props.source === "claude-code") && props.claudeFiveHourEstimate ? (
         <Section title="Claude 5-hour Estimate" color="green">
-          <EstimateCard estimate={props.claudeFiveHourEstimate} />
+          <PeakHourIndicator status={props.peakHourStatus} />
+          <Box marginTop={1}>
+            <EstimateCard estimate={props.claudeFiveHourEstimate} />
+          </Box>
           {props.claudeFiveHourHistory.length > 0 ? (
             <Box marginTop={1} flexDirection="column">
               <Text dimColor>Recent windows</Text>
@@ -971,7 +972,6 @@ export function DashboardApp(props: DashboardAppProps) {
         source={props.source}
         watch={props.watch}
         intervalSeconds={props.intervalSeconds}
-        peakHourStatus={peakHourStatus}
       />
       <DashboardTabs tab={tab} />
 
@@ -1003,6 +1003,7 @@ export function DashboardApp(props: DashboardAppProps) {
               claudeUsageRefreshing={claudeUsageRefreshing}
               claudeFiveHourEstimate={claudeFiveHourEstimate}
               claudeFiveHourHistory={claudeFiveHourHistory}
+              peakHourStatus={peakHourStatus}
             />
           ) : null}
           {tab === "trend" ? (
