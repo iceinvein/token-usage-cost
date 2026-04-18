@@ -230,7 +230,14 @@ function UsageIndicator(props: {
 
 function EstimateCard(props: { estimate: ClaudeFiveHourEstimate }) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor="green"
+      paddingX={1}
+      width="100%"
+      alignSelf="stretch"
+    >
       <Text bold color="green">5-hour Window Estimate</Text>
       <Text dimColor>{`Observed ${props.estimate.percentUsed}% used since ${formatLocalTimestamp(new Date(props.estimate.windowStartAt))}`}</Text>
       <Text>{`Observed  ${formatUsd(props.estimate.observedCostUsd)} / ${formatNumber(props.estimate.observedTokens)} tokens / ${formatNumber(props.estimate.observedEvents)} events`}</Text>
@@ -280,7 +287,15 @@ function CapacityIndicatorCard(props: {
   color?: string;
 }) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={props.color ?? "blue"} paddingX={1} width={40} marginRight={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={props.color ?? "blue"}
+      paddingX={1}
+      flexGrow={1}
+      flexBasis={0}
+      alignSelf="stretch"
+    >
       <Text bold color={props.color ?? "white"}>{props.title}</Text>
       <Box marginTop={1} flexDirection="column">
         {props.lines.map((line) => (
@@ -556,12 +571,12 @@ const OverviewTab = memo(function OverviewTab(props: {
         <Section title="Claude Capacity Estimates" color="green">
           <PeakHourIndicator status={props.peakHourStatus} />
           {props.claudeFiveHourEstimate ? (
-            <Box marginTop={1}>
+            <Box marginTop={1} flexDirection="column" width="100%">
               <EstimateCard estimate={props.claudeFiveHourEstimate} />
             </Box>
           ) : null}
           {props.claudeWeeklyEstimate || props.claudeMonthEstimate ? (
-            <Box marginTop={1}>
+            <Box marginTop={1} gap={1} width="100%">
               {props.claudeWeeklyEstimate ? (
                 <CapacityIndicatorCard title="Weekly Capacity" lines={weeklyCapacityLines} color="blue" />
               ) : null}
