@@ -43,6 +43,8 @@ type DashboardTodayModels = DashboardData["todayModels"];
 type DashboardMonthModels = DashboardData["monthModels"];
 type DashboardDailyRows = DashboardData["dailyRows"];
 type DashboardModelRows = DashboardData["modelRows"];
+type DashboardClaudeWeeklyEstimate = DashboardData["claudeWeeklyEstimate"];
+type DashboardClaudeMonthEstimate = DashboardData["claudeMonthEstimate"];
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -272,6 +274,23 @@ function EstimateHistoryTable(props: { history: ClaudeFiveHourEstimateHistory })
   );
 }
 
+function CapacityIndicatorCard(props: {
+  title: string;
+  lines: string[];
+  color?: string;
+}) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={props.color ?? "blue"} paddingX={1} width={40} marginRight={1}>
+      <Text bold color={props.color ?? "white"}>{props.title}</Text>
+      <Box marginTop={1} flexDirection="column">
+        {props.lines.map((line) => (
+          <Text key={line} dimColor>{line}</Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
 function ClaudeUsageCard(props: { window: ClaudeUsageWindow; color?: string }) {
   const filled = fillWidth(props.window.percentLeft, 100, 22);
   const empty = 22 - filled;
@@ -395,6 +414,8 @@ const OverviewTab = memo(function OverviewTab(props: {
   claudeUsageRefreshing: boolean;
   claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
+  claudeWeeklyEstimate: DashboardClaudeWeeklyEstimate;
+  claudeMonthEstimate: DashboardClaudeMonthEstimate;
   peakHourStatus: PeakHourStatus;
 }) {
   const sourceRows = DASHBOARD_SOURCES.map((source) => {
@@ -428,6 +449,20 @@ const OverviewTab = memo(function OverviewTab(props: {
   const topProjectMonth = props.monthProjects[0];
   const topModelToday = props.todayModels[0];
   const topModelMonth = props.monthModels[0];
+  const weeklyCapacityLines = props.claudeWeeklyEstimate ? [
+    `${props.claudeWeeklyEstimate.percentUsed}% used since ${formatLocalTimestamp(new Date(props.claudeWeeklyEstimate.windowStartAt)).slice(5, 16)}`,
+    `Observed ${formatUsd(props.claudeWeeklyEstimate.observedCostUsd)} / ${formatCompactNumber(props.claudeWeeklyEstimate.observedTokens)} tokens`,
+    `Full cap. ${formatUsd(props.claudeWeeklyEstimate.estimatedFullWindowCostUsd)} / ${formatCompactNumber(props.claudeWeeklyEstimate.estimatedFullWindowTokens)} tokens`,
+    `Left est. ${formatUsd(props.claudeWeeklyEstimate.estimatedRemainingCostUsd)} / ${formatCompactNumber(props.claudeWeeklyEstimate.estimatedRemainingTokens)} tokens`,
+    `Resets ${formatLocalTimestamp(new Date(props.claudeWeeklyEstimate.resetAt)).slice(5, 16)}`,
+  ] : [];
+  const monthCapacityLines = props.claudeMonthEstimate ? [
+    `Based on ${props.claudeMonthEstimate.basedOnLabel}`,
+    `MTD ${formatUsd(props.claudeMonthEstimate.currentMonthCostUsd)} / ${formatCompactNumber(props.claudeMonthEstimate.currentMonthTokens)} tokens`,
+    `Full cap. ${formatUsd(props.claudeMonthEstimate.estimatedFullMonthCostUsd)} / ${formatCompactNumber(props.claudeMonthEstimate.estimatedFullMonthTokens)} tokens`,
+    `Left est. ${formatUsd(props.claudeMonthEstimate.estimatedRemainingMonthCostUsd)} / ${formatCompactNumber(props.claudeMonthEstimate.estimatedRemainingMonthTokens)} tokens`,
+    `${props.claudeMonthEstimate.elapsedMonthDays}/${props.claudeMonthEstimate.daysInMonth} days elapsed`,
+  ] : [];
 
   return (
     <>
@@ -516,12 +551,25 @@ const OverviewTab = memo(function OverviewTab(props: {
         </Section>
       ) : null}
 
-      {(props.source === "all" || props.source === "claude-code") && props.claudeFiveHourEstimate ? (
-        <Section title="Claude 5-hour Estimate" color="green">
+      {(props.source === "all" || props.source === "claude-code")
+        && (props.claudeFiveHourEstimate || props.claudeWeeklyEstimate || props.claudeMonthEstimate) ? (
+        <Section title="Claude Capacity Estimates" color="green">
           <PeakHourIndicator status={props.peakHourStatus} />
-          <Box marginTop={1}>
-            <EstimateCard estimate={props.claudeFiveHourEstimate} />
-          </Box>
+          {props.claudeFiveHourEstimate ? (
+            <Box marginTop={1}>
+              <EstimateCard estimate={props.claudeFiveHourEstimate} />
+            </Box>
+          ) : null}
+          {props.claudeWeeklyEstimate || props.claudeMonthEstimate ? (
+            <Box marginTop={1}>
+              {props.claudeWeeklyEstimate ? (
+                <CapacityIndicatorCard title="Weekly Capacity" lines={weeklyCapacityLines} color="blue" />
+              ) : null}
+              {props.claudeMonthEstimate ? (
+                <CapacityIndicatorCard title="Monthly Capacity" lines={monthCapacityLines} color="magenta" />
+              ) : null}
+            </Box>
+          ) : null}
           {props.claudeFiveHourHistory.length > 0 ? (
             <Box marginTop={1} flexDirection="column">
               <Text dimColor>Recent windows</Text>
@@ -1003,6 +1051,8 @@ export function DashboardApp(props: DashboardAppProps) {
               claudeUsageRefreshing={claudeUsageRefreshing}
               claudeFiveHourEstimate={claudeFiveHourEstimate}
               claudeFiveHourHistory={claudeFiveHourHistory}
+              claudeWeeklyEstimate={data.claudeWeeklyEstimate}
+              claudeMonthEstimate={data.claudeMonthEstimate}
               peakHourStatus={peakHourStatus}
             />
           ) : null}

@@ -107,7 +107,7 @@ export type ClaudeUsageSample = {
   detailText: string;
 };
 
-export type ClaudeFiveHourEstimate = {
+export type ClaudeWindowCapacityEstimate = {
   fetchedAt: string;
   resetAt: string;
   windowStartAt: string;
@@ -122,4 +122,17 @@ export type ClaudeFiveHourEstimate = {
   estimatedRemainingCostUsd: number;
 };
 
+export type ClaudeFiveHourEstimate = ClaudeWindowCapacityEstimate;
 export type ClaudeFiveHourEstimateHistory = ClaudeFiveHourEstimate[];
+
+export type ClaudeMonthCapacityEstimate = {
+  basedOnLabel: string;
+  estimatedFullMonthTokens: number;
+  estimatedFullMonthCostUsd: number;
+  estimatedRemainingMonthTokens: number;
+  estimatedRemainingMonthCostUsd: number;
+  currentMonthTokens: number;
+  currentMonthCostUsd: number;
+  elapsedMonthDays: number;
+  daysInMonth: number;
+};
