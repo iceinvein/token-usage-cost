@@ -42,6 +42,7 @@ type DashboardMonthProjects = DashboardData["monthProjects"];
 type DashboardTodayModels = DashboardData["todayModels"];
 type DashboardMonthModels = DashboardData["monthModels"];
 type DashboardDailyRows = DashboardData["dailyRows"];
+type DashboardMonthlyRows = DashboardData["monthlyRows"];
 type DashboardModelRows = DashboardData["modelRows"];
 type DashboardClaudeWeeklyEstimate = DashboardData["claudeWeeklyEstimate"];
 type DashboardClaudeMonthEstimate = DashboardData["claudeMonthEstimate"];
@@ -666,6 +667,7 @@ const TrendTab = memo(function TrendTab(props: {
   week: DashboardWeek;
   month: DashboardMonth;
   dailyRows: DashboardDailyRows;
+  monthlyRows: DashboardMonthlyRows;
 }) {
   const maxDaily = Math.max(...props.dailyRows.map((row) => row.estimatedCostUsd), 0);
   const highestDay = props.dailyRows.reduce<DashboardDailyRows[number] | null>(
@@ -677,6 +679,19 @@ const TrendTab = memo(function TrendTab(props: {
     null,
   );
   const activeDays = props.dailyRows.filter((row) => row.events > 0);
+  const maxMonthly = Math.max(...props.monthlyRows.map((row) => row.estimatedCostUsd), 0);
+  const completedMonths = props.monthlyRows.filter((row) => !row.isPartial);
+  const highestMonth = completedMonths.reduce<DashboardMonthlyRows[number] | null>(
+    (best, row) => (!best || row.estimatedCostUsd > best.estimatedCostUsd ? row : best),
+    null,
+  );
+  const lowestMonth = completedMonths.reduce<DashboardMonthlyRows[number] | null>(
+    (best, row) => (!best || row.estimatedCostUsd < best.estimatedCostUsd ? row : best),
+    null,
+  );
+  const completedMonthAvgUsd = completedMonths.length > 0
+    ? completedMonths.reduce((sum, row) => sum + row.estimatedCostUsd, 0) / completedMonths.length
+    : 0;
 
   return (
     <>
@@ -720,6 +735,42 @@ const TrendTab = memo(function TrendTab(props: {
           value={lowestDay ? formatUsd(lowestDay.estimatedCostUsd) : "n/a"}
           detail={lowestDay ? `${lowestDay.date} • ${formatNumber(lowestDay.events)} events` : "No usage in range"}
           color="green"
+        />
+      </Section>
+
+      <Section title="6-Month Trend" color="magenta">
+        {props.monthlyRows.map((row) => (
+          <DataRow
+            key={row.monthStart}
+            left={row.isPartial ? `${row.monthLabel} (MTD)` : row.monthLabel}
+            bar={<InvertedBar value={row.estimatedCostUsd} total={maxMonthly} />}
+            right={<RowStats amount={formatUsd(row.estimatedCostUsd)} events={`${formatNumber(row.events)} events`} />}
+            color="magenta"
+          />
+        ))}
+        {props.monthlyRows.every((row) => row.events === 0) ? (
+          <Text dimColor>No usage in the last 6 months.</Text>
+        ) : null}
+      </Section>
+
+      <Section title="Month Extremes" color="magenta">
+        <SummaryLine
+          label="Highest month"
+          value={highestMonth ? formatUsd(highestMonth.estimatedCostUsd) : "n/a"}
+          detail={highestMonth ? `${highestMonth.monthLabel} • ${formatNumber(highestMonth.events)} events` : "Need a completed month"}
+          color="magenta"
+        />
+        <SummaryLine
+          label="Lowest month"
+          value={lowestMonth ? formatUsd(lowestMonth.estimatedCostUsd) : "n/a"}
+          detail={lowestMonth ? `${lowestMonth.monthLabel} • ${formatNumber(lowestMonth.events)} events` : "Need a completed month"}
+          color="magenta"
+        />
+        <SummaryLine
+          label="Completed-month avg"
+          value={completedMonths.length > 0 ? formatUsd(completedMonthAvgUsd) : "n/a"}
+          detail={completedMonths.length > 0 ? `${completedMonths.length} full month${completedMonths.length === 1 ? "" : "s"}` : "Need a completed month"}
+          color="magenta"
         />
       </Section>
     </>
@@ -1077,6 +1128,7 @@ export function DashboardApp(props: DashboardAppProps) {
               week={data.week}
               month={data.month}
               dailyRows={data.dailyRows}
+              monthlyRows={data.monthlyRows}
             />
           ) : null}
           {tab === "projects" ? (

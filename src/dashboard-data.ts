@@ -1,5 +1,11 @@
 import { summarizeDay, summarizeModelsByDay, summarizeProjects, summarizeRange } from "./aggregate";
-import { defaultDatabasePath, ensureDatabase, readClaudeUsageSamples, readEventsForRange } from "./db";
+import {
+  defaultDatabasePath,
+  ensureDatabase,
+  readClaudeUsageSamples,
+  readEventsForRange,
+  readMonthlyTotalsForRange,
+} from "./db";
 import { ingestClaudeUsage, ingestCodexUsage, ingestCursorUsage } from "./ingest";
 import { loadPricing } from "./pricing";
 import type {
@@ -20,6 +26,23 @@ export function addDays(date: string, days: number): string {
 
 export function monthStart(date: string): string {
   return `${date.slice(0, 7)}-01`;
+}
+
+export function shiftMonth(date: string, months: number): string {
+  const year = Number.parseInt(date.slice(0, 4), 10);
+  const month = Number.parseInt(date.slice(5, 7), 10);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  return target.toISOString().slice(0, 10);
+}
+
+const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+export function formatMonthLabel(monthStartDate: string): string {
+  return MONTH_LABEL_FORMATTER.format(new Date(`${monthStartDate}T00:00:00Z`));
 }
 
 export function todayInLocalTimezone(): string {
@@ -44,6 +67,15 @@ export function formatLocalTimestamp(date = new Date()): string {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}${timezone ? ` ${timezone}` : ""}`;
 }
 
+export type DashboardMonthlyRow = {
+  monthStart: string;
+  monthLabel: string;
+  events: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  isPartial: boolean;
+};
+
 export type DashboardData = {
   date: string;
   weekStart: string;
@@ -56,6 +88,7 @@ export type DashboardData = {
   todayModels: ReturnType<typeof summarizeDay>["byModel"];
   monthModels: ReturnType<typeof summarizeRange>["byModel"];
   dailyRows: Array<ReturnType<typeof summarizeDay>>;
+  monthlyRows: DashboardMonthlyRow[];
   modelRows: ReturnType<typeof summarizeModelsByDay>;
   claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
@@ -73,16 +106,40 @@ async function safeIngest<T>(run: () => Promise<T>): Promise<T | null> {
   }
 }
 
+const FIVE_HOUR_WINDOW_MS = 5 * 60 * 60_000;
+const FIVE_HOUR_RESET_GRACE_MS = 15 * 60_000;
+
+function timestampMs(timestamp: string): number | null {
+  const value = new Date(timestamp).getTime();
+  return Number.isNaN(value) ? null : value;
+}
+
+function isPlausibleFiveHourSample(sample: ClaudeUsageSample): boolean {
+  if (sample.windowKind !== "fiveHour" || !sample.resetAt) {
+    return false;
+  }
+
+  const fetchedAtMs = timestampMs(sample.fetchedAt);
+  const resetAtMs = timestampMs(sample.resetAt);
+  if (fetchedAtMs === null || resetAtMs === null) {
+    return false;
+  }
+
+  const msUntilReset = resetAtMs - fetchedAtMs;
+  return msUntilReset >= -FIVE_HOUR_RESET_GRACE_MS
+    && msUntilReset <= FIVE_HOUR_WINDOW_MS + FIVE_HOUR_RESET_GRACE_MS;
+}
+
 function subtractHours(timestamp: string, hours: number): string {
   const value = new Date(timestamp);
   value.setHours(value.getHours() - hours);
-  return value.toISOString().slice(0, 19);
+  return value.toISOString();
 }
 
 function subtractDays(timestamp: string, days: number): string {
   const value = new Date(timestamp);
   value.setDate(value.getDate() - days);
-  return value.toISOString().slice(0, 19);
+  return value.toISOString();
 }
 
 function buildClaudeWindowEstimate(
@@ -139,7 +196,12 @@ function buildClaudeFiveHourEstimate(
   samples: ClaudeUsageSample[],
   events: ReturnType<typeof readEventsForRange>,
 ): ClaudeFiveHourEstimate | null {
-  const estimate = buildClaudeWindowEstimate(samples, events, "fiveHour", (sample) => subtractHours(sample.resetAt!, 5));
+  const estimate = buildClaudeWindowEstimate(
+    samples.filter(isPlausibleFiveHourSample),
+    events,
+    "fiveHour",
+    (sample) => subtractHours(sample.resetAt!, 5),
+  );
   if (!estimate) {
     return null;
   }
@@ -209,7 +271,7 @@ function buildClaudeFiveHourEstimateHistory(
   const latestSamplesByReset = new Map<string, ClaudeUsageSample>();
 
   for (const sample of samples
-    .filter((candidate) => candidate.windowKind === "fiveHour" && candidate.resetAt && candidate.percentUsed > 0)
+    .filter((candidate) => candidate.percentUsed > 0 && isPlausibleFiveHourSample(candidate))
     .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))) {
     const key = roundToNearestHour(sample.resetAt!);
     latestSamplesByReset.set(key, sample);
@@ -227,7 +289,7 @@ export async function loadClaudeFiveHourEstimate(dbPath = defaultDatabasePath())
   try {
     const samples = readClaudeUsageSamples(db, "fiveHour");
     const latestSample = [...samples]
-      .filter((sample) => sample.resetAt)
+      .filter(isPlausibleFiveHourSample)
       .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))
       .at(-1);
     if (!latestSample?.resetAt) {
@@ -249,7 +311,7 @@ export async function loadClaudeFiveHourHistory(
   try {
     const samples = readClaudeUsageSamples(db, "fiveHour");
     const earliestResetAt = [...samples]
-      .filter((sample) => sample.resetAt)
+      .filter(isPlausibleFiveHourSample)
       .sort((a, b) => a.resetAt!.localeCompare(b.resetAt!))
       .at(0)?.resetAt;
     if (!earliestResetAt) {
@@ -289,46 +351,79 @@ export async function loadDashboardData(args: {
   const monthBegin = monthStart(args.date);
   const weekStart = addDays(args.date, -6);
   const estimateStart = addDays(args.date, -7);
+  const trendMonthsBack = 5;
+  const trendStart = shiftMonth(monthBegin, -trendMonthsBack);
   const rangeStart = estimateStart < monthBegin ? estimateStart : monthBegin;
   const endExclusive = addDays(args.date, 1);
 
   try {
-    const estimateEvents = readEventsForRange(db, `${rangeStart}T00:00:00`, `${endExclusive}T00:00:00`);
-    const rawEvents = estimateEvents.filter((event) => event.timestamp >= `${monthBegin}T00:00:00`);
-    const events = args.source === "all"
-      ? rawEvents
-      : rawEvents.filter((event) => event.source === args.source);
-    const today = summarizeDay(events, args.date, pricing);
+    const allRangeEvents = readEventsForRange(db, `${rangeStart}T00:00:00`, `${endExclusive}T00:00:00`);
+    const filteredAllRangeEvents = args.source === "all"
+      ? allRangeEvents
+      : allRangeEvents.filter((event) => event.source === args.source);
+    const estimateEvents = allRangeEvents.filter((event) => event.timestamp >= `${estimateStart}T00:00:00`);
+    const weekEvents = filteredAllRangeEvents.filter(
+      (event) => event.timestamp >= `${weekStart}T00:00:00`,
+    );
+    const monthEvents = filteredAllRangeEvents.filter(
+      (event) => event.timestamp >= `${monthBegin}T00:00:00`,
+    );
+    const today = summarizeDay(weekEvents, args.date, pricing);
     const week = summarizeRange(
-      events.filter((event) => event.timestamp.slice(0, 10) >= weekStart),
+      weekEvents,
       `${weekStart} to ${args.date}`,
       weekStart,
       args.date,
       pricing,
     );
     const month = summarizeRange(
-      events,
+      monthEvents,
       `${monthBegin} to ${args.date}`,
       monthBegin,
       args.date,
       pricing,
     );
     const claudeMonth = summarizeRange(
-      rawEvents.filter((event) => event.source === "claude-code"),
+      allRangeEvents.filter(
+        (event) => event.source === "claude-code"
+          && event.timestamp >= `${monthBegin}T00:00:00`,
+      ),
       `${monthBegin} to ${args.date}`,
       monthBegin,
       args.date,
       pricing,
     );
     const todayProjects = summarizeProjects(
-      events.filter((event) => event.timestamp.startsWith(args.date)),
+      weekEvents.filter((event) => event.timestamp.startsWith(args.date)),
     );
-    const monthProjects = summarizeProjects(events);
+    const monthProjects = summarizeProjects(monthEvents);
     const dailyRows = [];
     for (let current = weekStart; current <= args.date; current = addDays(current, 1)) {
-      dailyRows.push(summarizeDay(events, current, pricing));
+      dailyRows.push(summarizeDay(weekEvents, current, pricing));
     }
     dailyRows.reverse();
+
+    const trendEnd = shiftMonth(monthBegin, 1);
+    const monthlyTotals = readMonthlyTotalsForRange(
+      db,
+      `${trendStart}T00:00:00`,
+      `${trendEnd}T00:00:00`,
+      args.source === "all" ? undefined : args.source,
+    );
+    const totalsByMonth = new Map(monthlyTotals.map((row) => [row.month, row]));
+    const monthlyRows: DashboardMonthlyRow[] = [];
+    for (let offset = trendMonthsBack; offset >= 0; offset -= 1) {
+      const startOfMonth = shiftMonth(monthBegin, -offset);
+      const totals = totalsByMonth.get(startOfMonth.slice(0, 7));
+      monthlyRows.push({
+        monthStart: startOfMonth,
+        monthLabel: formatMonthLabel(startOfMonth),
+        events: totals?.events ?? 0,
+        totalTokens: totals?.totalTokens ?? 0,
+        estimatedCostUsd: totals?.estimatedCostUsd ?? 0,
+        isPartial: offset === 0,
+      });
+    }
     const claudeUsageSamples = readClaudeUsageSamples(db);
     const claudeFiveHourHistory = buildClaudeFiveHourEstimateHistory(claudeUsageSamples, estimateEvents);
     const claudeWeeklyEstimate = buildClaudeWeeklyEstimate(claudeUsageSamples, estimateEvents);
@@ -345,7 +440,8 @@ export async function loadDashboardData(args: {
       todayModels: today.byModel,
       monthModels: month.byModel,
       dailyRows,
-      modelRows: summarizeModelsByDay(events, weekStart, args.date),
+      monthlyRows,
+      modelRows: summarizeModelsByDay(weekEvents, weekStart, args.date),
       claudeFiveHourEstimate: buildClaudeFiveHourEstimate(claudeUsageSamples, estimateEvents),
       claudeFiveHourHistory,
       claudeWeeklyEstimate,

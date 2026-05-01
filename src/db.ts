@@ -332,6 +332,51 @@ export function readEventsForRange(
   }));
 }
 
+export type MonthlyTotals = {
+  month: string;
+  events: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+};
+
+export function readMonthlyTotalsForRange(
+  db: Database,
+  startTimestamp: string,
+  endTimestamp: string,
+  source?: UsageEvent["source"],
+): MonthlyTotals[] {
+  const sql = `
+    SELECT
+      substr(timestamp, 1, 7) AS month,
+      COUNT(*) AS events,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost_usd
+    FROM usage_events
+    WHERE timestamp >= ? AND timestamp < ?
+    ${source ? "AND source = ?" : ""}
+    GROUP BY month
+    ORDER BY month ASC
+  `;
+
+  type Row = {
+    month: string;
+    events: number;
+    total_tokens: number;
+    estimated_cost_usd: number;
+  };
+
+  const rows = (source
+    ? db.query<Row, [string, string, UsageEvent["source"]]>(sql).all(startTimestamp, endTimestamp, source)
+    : db.query<Row, [string, string]>(sql).all(startTimestamp, endTimestamp)) ?? [];
+
+  return rows.map((row) => ({
+    month: row.month,
+    events: row.events,
+    totalTokens: row.total_tokens ?? 0,
+    estimatedCostUsd: row.estimated_cost_usd ?? 0,
+  }));
+}
+
 export function readEventCount(db: Database): number {
   const row = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM usage_events").get();
   return row?.count ?? 0;

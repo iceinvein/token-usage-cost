@@ -58,6 +58,7 @@ exit 0
 `;
 
 const execFileAsync = promisify(execFile);
+const RESET_TIME_PAST_GRACE_MS = 15 * 60_000;
 
 export function defaultClaudeUsageSnapshotPath(): string {
   return join(homedir(), ".local", "share", "claude-cost", "claude-usage.json");
@@ -243,7 +244,7 @@ function parseResetAt(resetText: string | undefined, fetchedAt: string): string 
         hours += 12;
       }
       candidate.setHours(hours, minuteValue ? Number.parseInt(minuteValue, 10) : 0, 0, 0);
-      if (candidate.getTime() <= fetchedDate.getTime()) {
+      if (candidate.getTime() < fetchedDate.getTime() - RESET_TIME_PAST_GRACE_MS) {
         candidate.setDate(candidate.getDate() + 1);
       }
       return toIsoLocalDateTime(candidate);
