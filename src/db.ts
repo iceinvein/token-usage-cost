@@ -45,7 +45,8 @@ function initDatabase(db: Database): void {
       total_tokens INTEGER NOT NULL DEFAULT 0,
       token_breakdown_known INTEGER NOT NULL DEFAULT 1,
       speed TEXT NOT NULL,
-      estimated_cost_usd REAL NOT NULL
+      estimated_cost_usd REAL NOT NULL,
+      synced_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_usage_events_timestamp ON usage_events(timestamp);
@@ -71,6 +72,8 @@ function initDatabase(db: Database): void {
   for (const statement of [
     "ALTER TABLE usage_events ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE usage_events ADD COLUMN token_breakdown_known INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE usage_events ADD COLUMN synced_at TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_usage_events_synced ON usage_events(synced_at)",
   ]) {
     try {
       db.exec(statement);
@@ -491,4 +494,196 @@ export function readClaudeUsageSamples(
 
 export function emptyIngestStats(): IngestStats {
   return { filesScanned: 0, filesSkipped: 0, eventsInserted: 0 };
+}
+
+export function readUnsyncedEvents(
+  db: Database,
+  limit: number,
+  minTimestamp?: string,
+  source?: UsageEvent["source"],
+): UsageEvent[] {
+  type Row = {
+    source: UsageEvent["source"];
+    project: string;
+    session_id: string;
+    file_path: string;
+    event_key: string;
+    timestamp: string;
+    message_id: string | null;
+    model: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_write_tokens: number;
+    cache_read_tokens: number;
+    web_search_requests: number;
+    total_tokens: number;
+    token_breakdown_known: number;
+    speed: UsageEvent["speed"];
+    estimated_cost_usd: number;
+  };
+
+  const baseColumns = `
+    source,
+    project,
+    session_id,
+    file_path,
+    event_key,
+    timestamp,
+    message_id,
+    model,
+    input_tokens,
+    output_tokens,
+    cache_write_tokens,
+    cache_read_tokens,
+    web_search_requests,
+    total_tokens,
+    token_breakdown_known,
+    speed,
+    estimated_cost_usd
+  `;
+
+  const conditions = ["synced_at IS NULL"];
+  const params: Array<string | number> = [];
+  if (minTimestamp) {
+    conditions.push("timestamp >= ?");
+    params.push(minTimestamp);
+  }
+  if (source) {
+    conditions.push("source = ?");
+    params.push(source);
+  }
+  params.push(limit);
+
+  const rows = db
+    .query<Row, typeof params>(
+      `SELECT ${baseColumns}
+       FROM usage_events
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY timestamp ASC
+       LIMIT ?`,
+    )
+    .all(...params);
+
+  return rows.map((row) => ({
+    source: row.source,
+    project: row.project,
+    sessionId: row.session_id,
+    filePath: row.file_path,
+    eventKey: row.event_key,
+    timestamp: row.timestamp,
+    messageId: row.message_id ?? undefined,
+    model: row.model,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    cacheWriteTokens: row.cache_write_tokens,
+    cacheReadTokens: row.cache_read_tokens,
+    webSearchRequests: row.web_search_requests,
+    totalTokens: row.total_tokens ?? 0,
+    tokenBreakdownKnown: Boolean(row.token_breakdown_known ?? 1),
+    speed: row.speed,
+    estimatedCostUsd: row.estimated_cost_usd,
+  }));
+}
+
+export function markEventsSynced(db: Database, eventKeys: string[]): number {
+  if (eventKeys.length === 0) {
+    return 0;
+  }
+
+  const update = db.query("UPDATE usage_events SET synced_at = ? WHERE event_key = ?");
+  const now = new Date().toISOString();
+
+  const transaction = db.transaction(() => {
+    for (const key of eventKeys) {
+      update.run(now, key);
+    }
+  });
+
+  transaction();
+  return eventKeys.length;
+}
+
+export function readUnsyncedCount(
+  db: Database,
+  minTimestamp?: string,
+  source?: UsageEvent["source"],
+): number {
+  const conditions = ["synced_at IS NULL"];
+  const params: string[] = [];
+  if (minTimestamp) {
+    conditions.push("timestamp >= ?");
+    params.push(minTimestamp);
+  }
+  if (source) {
+    conditions.push("source = ?");
+    params.push(source);
+  }
+  const row = db
+    .query<{ count: number }, typeof params>(
+      `SELECT COUNT(*) AS count FROM usage_events WHERE ${conditions.join(" AND ")}`,
+    )
+    .get(...params);
+  return row?.count ?? 0;
+}
+
+export function markUnsyncedBefore(
+  db: Database,
+  minTimestamp: string,
+  source?: UsageEvent["source"],
+): number {
+  const conditions = ["synced_at IS NULL", "timestamp < ?"];
+  const params: string[] = [new Date().toISOString(), minTimestamp];
+  if (source) {
+    conditions.push("source = ?");
+    params.push(source);
+  }
+  const result = db
+    .query(`UPDATE usage_events SET synced_at = ? WHERE ${conditions.join(" AND ")}`)
+    .run(...params);
+  return Number(result.changes ?? 0);
+}
+
+type SyncRangeFilter = {
+  since?: string;
+  until?: string;
+  source?: UsageEvent["source"];
+};
+
+function buildSyncedRangeWhere(filter: SyncRangeFilter): {
+  clause: string;
+  params: string[];
+} {
+  const conditions = ["synced_at IS NOT NULL"];
+  const params: string[] = [];
+  if (filter.since) {
+    conditions.push("timestamp >= ?");
+    params.push(filter.since);
+  }
+  if (filter.until) {
+    conditions.push("timestamp < ?");
+    params.push(filter.until);
+  }
+  if (filter.source) {
+    conditions.push("source = ?");
+    params.push(filter.source);
+  }
+  return { clause: conditions.join(" AND "), params };
+}
+
+export function readSyncedCount(db: Database, filter: SyncRangeFilter): number {
+  const { clause, params } = buildSyncedRangeWhere(filter);
+  const row = db
+    .query<{ count: number }, typeof params>(
+      `SELECT COUNT(*) AS count FROM usage_events WHERE ${clause}`,
+    )
+    .get(...params);
+  return row?.count ?? 0;
+}
+
+export function clearSyncStatus(db: Database, filter: SyncRangeFilter): number {
+  const { clause, params } = buildSyncedRangeWhere(filter);
+  const result = db
+    .query(`UPDATE usage_events SET synced_at = NULL WHERE ${clause}`)
+    .run(...params);
+  return Number(result.changes ?? 0);
 }

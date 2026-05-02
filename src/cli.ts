@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { homedir } from "node:os";
 
 import { Command } from "commander";
@@ -15,15 +16,26 @@ import {
   type DashboardSourceFilter,
 } from "./dashboard-data";
 import {
+  clearSyncStatus,
   defaultDatabasePath,
   ensureDatabase,
   readEventCount,
   readEventsForDate,
   readEventsForRange,
+  readSyncedCount,
+  readUnsyncedCount,
 } from "./db";
 import { renderDashboard } from "./dashboard";
 import { ingestClaudeUsage, ingestCodexUsage, ingestCursorUsage } from "./ingest";
 import { toCsv } from "./export";
+import {
+  cancelLokiDelete,
+  listLokiDeleteRequests,
+  lokiConfigFromEnv,
+  probeLoki,
+  pushUnsyncedToLoki,
+  requestLokiDelete,
+} from "./loki-sink";
 import { loadPricing } from "./pricing";
 
 function formatUsd(amount: number): string {
@@ -174,7 +186,19 @@ program
   .option("--root <path>", "Claude transcripts root", `${homedir()}/.claude/projects`)
   .option("--codex-state <path>", "Codex state sqlite path", `${homedir()}/.codex/state_5.sqlite`)
   .option("--db <path>", "SQLite database path", defaultDatabasePath())
-  .action(async ({ root, codexState, db: dbPath }: { root: string; codexState: string; db: string }) => {
+  .option("--push-loki", "Push new events to Grafana Loki after ingest", false)
+  .action(
+    async ({
+      root,
+      codexState,
+      db: dbPath,
+      pushLoki,
+    }: {
+      root: string;
+      codexState: string;
+      db: string;
+      pushLoki: boolean;
+    }) => {
       const pricing = await loadPricing();
       const db = await ensureDatabase(dbPath);
 
@@ -183,20 +207,34 @@ program
         const codexStats = await ingestCodexUsage(db, codexState, pricing);
         const cursorStats = await ingestCursorUsage(db, undefined, pricing);
         const stats = {
-        filesScanned: claudeStats.filesScanned + codexStats.filesScanned + cursorStats.filesScanned,
-        filesSkipped: claudeStats.filesSkipped + codexStats.filesSkipped + cursorStats.filesSkipped,
-        eventsInserted: claudeStats.eventsInserted + codexStats.eventsInserted + cursorStats.eventsInserted,
+          filesScanned: claudeStats.filesScanned + codexStats.filesScanned + cursorStats.filesScanned,
+          filesSkipped: claudeStats.filesSkipped + codexStats.filesSkipped + cursorStats.filesSkipped,
+          eventsInserted:
+            claudeStats.eventsInserted + codexStats.eventsInserted + cursorStats.eventsInserted,
         };
 
-      console.log(`Database: ${dbPath}`);
-      console.log(`Files scanned: ${formatNumber(stats.filesScanned)}`);
-      console.log(`Files skipped: ${formatNumber(stats.filesSkipped)}`);
-      console.log(`Events upserted: ${formatNumber(stats.eventsInserted)}`);
-      console.log(`Total stored events: ${formatNumber(readEventCount(db))}`);
-    } finally {
-      db.close();
-    }
-  });
+        console.log(`Database: ${dbPath}`);
+        console.log(`Files scanned: ${formatNumber(stats.filesScanned)}`);
+        console.log(`Files skipped: ${formatNumber(stats.filesSkipped)}`);
+        console.log(`Events upserted: ${formatNumber(stats.eventsInserted)}`);
+        console.log(`Total stored events: ${formatNumber(readEventCount(db))}`);
+
+        if (pushLoki) {
+          const config = lokiConfigFromEnv();
+          if (!config) {
+            console.error("LOKI_URL not set; skipping Loki push.");
+          } else {
+            const result = await pushUnsyncedToLoki(db, config);
+            console.log(
+              `Loki: pushed ${formatNumber(result.pushed)} events in ${formatNumber(result.batches)} batches (${formatNumber(result.remaining)} remaining).`,
+            );
+          }
+        }
+      } finally {
+        db.close();
+      }
+    },
+  );
 
 program
   .command("today")
@@ -666,6 +704,387 @@ program
         console.log(`Wrote ${type} ${format} export to ${out}`);
       } else {
         process.stdout.write(payload);
+      }
+    },
+  );
+
+program
+  .command("loki-test")
+  .description("Probe Grafana Loki credentials by querying the labels API")
+  .action(async () => {
+    const config = lokiConfigFromEnv();
+    if (!config) {
+      console.error("LOKI_URL is not set. Add it to .env / .env.local or your shell.");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`URL:      ${config.url}`);
+    console.log(`User:     ${config.username ?? "(none)"}`);
+    console.log(`Token:    ${config.password ? `${config.password.slice(0, 6)}... (${config.password.length} chars)` : "(none)"}`);
+    console.log(`Tenant:   ${config.tenantId ?? "(none)"}`);
+    console.log(`Team/Env: ${config.team} / ${config.env}`);
+
+    try {
+      const { status, body } = await probeLoki(config);
+      console.log(`\nGET /loki/api/v1/labels -> ${status}`);
+      const trimmed = body.length > 400 ? `${body.slice(0, 400)}...` : body;
+      console.log(trimmed || "(empty body)");
+
+      if (status === 200) {
+        console.log("\nOK: credentials accepted by Loki.");
+      } else if (status === 401 || status === 403) {
+        console.log("\nAuth rejected. Check LOKI_USERNAME (instance id) and LOKI_PASSWORD/LOKI_TOKEN.");
+        process.exitCode = 1;
+      } else {
+        console.log("\nUnexpected response. URL host or tenant likely wrong.");
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`\nRequest failed: ${message}`);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("loki-push")
+  .description("Push unsynced usage events to Grafana Loki")
+  .option("--db <path>", "SQLite database path", defaultDatabasePath())
+  .option("--url <url>", "Override LOKI_URL")
+  .option("--team <name>", "Override LOKI_TEAM label")
+  .option("--env <name>", "Override LOKI_ENV label")
+  .option("--user <name>", "Override LOKI_USER_LABEL (logged in JSON, not as a label)")
+  .option("--tenant <id>", "Override LOKI_TENANT_ID (X-Scope-OrgID header)")
+  .option("--batch-size <n>", "Override batch size", "500")
+  .option(
+    "--max-age-hours <n>",
+    "Skip events older than this (Loki rejects > reject_old_samples_max_age, default 168h)",
+  )
+  .option("--dry-run", "Print the first batch payload without sending", false)
+  .action(
+    async ({
+      db: dbPath,
+      url,
+      team,
+      env,
+      user,
+      tenant,
+      batchSize,
+      maxAgeHours,
+      dryRun,
+    }: {
+      db: string;
+      url?: string;
+      team?: string;
+      env?: string;
+      user?: string;
+      tenant?: string;
+      batchSize: string;
+      maxAgeHours?: string;
+      dryRun: boolean;
+    }) => {
+      const config = lokiConfigFromEnv({
+        url,
+        team,
+        env,
+        user,
+        tenantId: tenant,
+        batchSize: Number(batchSize),
+        maxAgeHours: maxAgeHours ? Number(maxAgeHours) : undefined,
+      });
+
+      if (!config) {
+        console.error("LOKI_URL is not set. Provide it via env or --url.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const db = await ensureDatabase(dbPath);
+      try {
+        const pending = readUnsyncedCount(db, undefined, "claude-code");
+        console.log(`Database: ${dbPath}`);
+        console.log(`Loki target: ${config.url} (tenant: ${config.tenantId ?? "-"})`);
+        console.log(
+          `Labels: service=claude-cost team=${config.team} env=${config.env} (per-event tool, user=${config.user})`,
+        );
+        console.log(`Window: last ${config.maxAgeHours}h`);
+        console.log(`Unsynced events: ${formatNumber(pending)}`);
+
+        if (pending === 0) {
+          return;
+        }
+
+        const result = await pushUnsyncedToLoki(db, config, { dryRun });
+        if (result.skippedTooOld > 0) {
+          console.log(
+            `Marked ${formatNumber(result.skippedTooOld)} events older than ${result.cutoff} as synced (outside Loki retention window).`,
+          );
+        }
+        if (dryRun) {
+          console.log(
+            `Dry run: built ${formatNumber(result.pushed)} events into ${formatNumber(result.batches)} batch(es); nothing sent.`,
+          );
+        } else {
+          console.log(
+            `Pushed ${formatNumber(result.pushed)} events in ${formatNumber(result.batches)} batches; ${formatNumber(result.remaining)} remaining.`,
+          );
+        }
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+program
+  .command("loki-delete")
+  .description("Submit, list, or cancel Loki log deletion requests")
+  .option(
+    "--query <logql>",
+    "LogQL stream selector to delete",
+    '{service="claude-cost"}',
+  )
+  .option(
+    "--start <iso>",
+    "Start time (ISO 8601 or unix seconds). Defaults to 30 days ago.",
+  )
+  .option("--end <iso>", "End time (ISO 8601 or unix seconds). Defaults to now.")
+  .option(
+    "--days <n>",
+    "Convenience: delete last N days of data (overrides --start)",
+  )
+  .option("--list", "List pending delete requests instead of submitting", false)
+  .option("--cancel <id>", "Cancel a pending delete request by id")
+  .option("--yes", "Skip confirmation prompt", false)
+  .action(
+    async ({
+      query,
+      start,
+      end,
+      days,
+      list,
+      cancel,
+      yes,
+    }: {
+      query: string;
+      start?: string;
+      end?: string;
+      days?: string;
+      list: boolean;
+      cancel?: string;
+      yes: boolean;
+    }) => {
+      const config = lokiConfigFromEnv();
+      if (!config) {
+        console.error("LOKI_URL is not set. Provide it via env or .env.");
+        process.exitCode = 1;
+        return;
+      }
+
+      if (list) {
+        const result = await listLokiDeleteRequests(config);
+        console.log(`GET /loki/api/v1/delete -> ${result.status}`);
+        if (result.requests.length === 0) {
+          console.log(result.body || "(no pending delete requests)");
+          return;
+        }
+        for (const req of result.requests) {
+          const startIso = new Date(req.start_time * 1000).toISOString();
+          const endIso = new Date(req.end_time * 1000).toISOString();
+          console.log(
+            `${req.request_id}  ${req.status}  ${startIso} -> ${endIso}  ${req.query}`,
+          );
+        }
+        return;
+      }
+
+      if (cancel) {
+        const result = await cancelLokiDelete(config, cancel);
+        console.log(`DELETE /loki/api/v1/delete?request_id=${cancel} -> ${result.status}`);
+        if (result.body) console.log(result.body);
+        if (result.status !== 204 && result.status !== 200) process.exitCode = 1;
+        return;
+      }
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const endSec = end ? parseTimeArg(end) : nowSec;
+      const defaultDays = days ? Number(days) : 30;
+      if (!Number.isFinite(defaultDays) || defaultDays <= 0) {
+        console.error("Invalid --days. Must be a positive number.");
+        process.exitCode = 1;
+        return;
+      }
+      const startSec = start
+        ? parseTimeArg(start)
+        : endSec - Math.floor(defaultDays * 24 * 60 * 60);
+      if (Number.isNaN(startSec) || Number.isNaN(endSec)) {
+        console.error("Invalid --start or --end. Use ISO 8601 or unix seconds.");
+        process.exitCode = 1;
+        return;
+      }
+      if (startSec >= endSec) {
+        console.error("--start must be before --end.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const startIso = new Date(startSec * 1000).toISOString();
+      const endIso = new Date(endSec * 1000).toISOString();
+      console.log(`Loki target: ${config.url} (tenant: ${config.tenantId ?? "-"})`);
+      console.log(`Query:       ${query}`);
+      console.log(`Start:       ${startIso}`);
+      console.log(`End:         ${endIso}`);
+
+      if (!yes) {
+        const answer = prompt("\nSubmit delete request? [y/N] ") ?? "";
+        if (answer.trim().toLowerCase() !== "y") {
+          console.log("Aborted.");
+          return;
+        }
+      }
+
+      const result = await requestLokiDelete(config, { query, startSec, endSec });
+      console.log(`POST /loki/api/v1/delete -> ${result.status}`);
+      if (result.body) console.log(result.body);
+      if (result.status === 204 || result.status === 200) {
+        console.log("\nQueued. Run with --list to track status (deletion is asynchronous).");
+      } else {
+        if (result.status === 404) {
+          console.log("\n404: deletion may not be enabled on this Loki stack.");
+        }
+        process.exitCode = 1;
+      }
+    },
+  );
+
+function parseTimeArg(value: string): number {
+  if (/^\d+$/.test(value)) return Number(value);
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? Number.NaN : Math.floor(ms / 1000);
+}
+
+const ALLOWED_RESET_SOURCES = new Set(["claude-code", "codex-cli", "cursor"] as const);
+type ResetSource = "claude-code" | "codex-cli" | "cursor";
+
+program
+  .command("loki-reset-sync")
+  .description(
+    "Clear synced_at on local events so they can be re-pushed to Loki. Requires an explicit time range.",
+  )
+  .option("--db <path>", "SQLite database path", defaultDatabasePath())
+  .option("--since <iso>", "Only clear events with timestamp >= this (ISO 8601 or unix seconds)")
+  .option("--until <iso>", "Only clear events with timestamp < this (ISO 8601 or unix seconds)")
+  .option(
+    "--days <n>",
+    "Convenience: clear last N days of events (sets --since to now-Nd, --until to now)",
+  )
+  .option("--source <name>", "Filter by source: claude-code | codex-cli | cursor", "claude-code")
+  .option(
+    "--all-sources",
+    "Clear across all sources (overrides --source)",
+    false,
+  )
+  .option("--yes", "Skip confirmation prompt", false)
+  .action(
+    async ({
+      db: dbPath,
+      since,
+      until,
+      days,
+      source,
+      allSources,
+      yes,
+    }: {
+      db: string;
+      since?: string;
+      until?: string;
+      days?: string;
+      source: string;
+      allSources: boolean;
+      yes: boolean;
+    }) => {
+      let sinceIso: string | undefined;
+      let untilIso: string | undefined;
+
+      if (days) {
+        const n = Number(days);
+        if (!Number.isFinite(n) || n <= 0) {
+          console.error("Invalid --days. Must be a positive number.");
+          process.exitCode = 1;
+          return;
+        }
+        const nowSec = Math.floor(Date.now() / 1000);
+        sinceIso = new Date((nowSec - Math.floor(n * 24 * 60 * 60)) * 1000).toISOString();
+        untilIso = new Date(nowSec * 1000).toISOString();
+      } else {
+        if (since) {
+          const sec = parseTimeArg(since);
+          if (Number.isNaN(sec)) {
+            console.error("Invalid --since. Use ISO 8601 or unix seconds.");
+            process.exitCode = 1;
+            return;
+          }
+          sinceIso = new Date(sec * 1000).toISOString();
+        }
+        if (until) {
+          const sec = parseTimeArg(until);
+          if (Number.isNaN(sec)) {
+            console.error("Invalid --until. Use ISO 8601 or unix seconds.");
+            process.exitCode = 1;
+            return;
+          }
+          untilIso = new Date(sec * 1000).toISOString();
+        }
+      }
+
+      if (!sinceIso && !untilIso) {
+        console.error(
+          "Refusing to clear without a time range. Pass --since/--until or --days.",
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      let sourceFilter: ResetSource | undefined;
+      if (!allSources) {
+        if (!ALLOWED_RESET_SOURCES.has(source as ResetSource)) {
+          console.error(
+            `Invalid --source '${source}'. Expected one of: claude-code, codex-cli, cursor.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        sourceFilter = source as ResetSource;
+      }
+
+      const db = await ensureDatabase(dbPath);
+      try {
+        const filter = { since: sinceIso, until: untilIso, source: sourceFilter };
+        const matched = readSyncedCount(db, filter);
+
+        console.log(`Database:    ${dbPath}`);
+        console.log(`Source:      ${sourceFilter ?? "(all)"}`);
+        console.log(`Since:       ${sinceIso ?? "(beginning of time)"}`);
+        console.log(`Until:       ${untilIso ?? "(now)"}`);
+        console.log(`Will clear:  ${formatNumber(matched)} synced events`);
+
+        if (matched === 0) {
+          return;
+        }
+
+        if (!yes) {
+          const answer = prompt("\nClear synced_at on these events? [y/N] ") ?? "";
+          if (answer.trim().toLowerCase() !== "y") {
+            console.log("Aborted.");
+            return;
+          }
+        }
+
+        const cleared = clearSyncStatus(db, filter);
+        console.log(`Cleared synced_at on ${formatNumber(cleared)} events.`);
+        console.log("Run `claude-cost loki-push` to ship them.");
+      } finally {
+        db.close();
       }
     },
   );

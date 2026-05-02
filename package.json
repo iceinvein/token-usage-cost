@@ -15,6 +15,10 @@
     "dashboard": "bun run src/cli.ts dashboard",
     "dashboard:plain": "bun run src/cli.ts dashboard --plain",
     "export": "bun run src/cli.ts export",
+    "loki:test": "bun run src/cli.ts loki-test",
+    "loki:push": "bun run src/cli.ts loki-push",
+    "loki:delete": "bun run src/cli.ts loki-delete",
+    "loki:reset": "bun run src/cli.ts loki-reset-sync",
     "check": "tsc --noEmit"
   },
   "keywords": [
