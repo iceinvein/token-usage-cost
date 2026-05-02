@@ -820,6 +820,287 @@
           }
         }
       }
+    },
+    "cost-by-model-time": {
+      "kind": "Panel",
+      "spec": {
+        "id": 13,
+        "title": "Cost over time by model",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$__interval]))",
+                      "queryType": "range",
+                      "legendFormat": "{{model}}"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "timeseries",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "tooltip": { "mode": "multi", "sort": "desc" },
+              "legend": { "showLegend": true, "displayMode": "table", "placement": "right", "calcs": ["sum"] }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "currencyUSD",
+                "decimals": 2,
+                "custom": {
+                  "drawStyle": "bars",
+                  "lineWidth": 1,
+                  "fillOpacity": 80,
+                  "stacking": { "mode": "normal", "group": "A" },
+                  "axisPlacement": "auto"
+                }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "events-by-model": {
+      "kind": "Panel",
+      "spec": {
+        "id": 14,
+        "title": "Events by model ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (count_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json [$range]))",
+                      "queryType": "instant",
+                      "legendFormat": "{{model}}"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "piechart",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "pieType": "donut",
+              "displayLabels": ["name", "percent"],
+              "legend": { "showLegend": true, "displayMode": "list", "placement": "right", "values": ["percent"] },
+              "tooltip": { "mode": "single" },
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true }
+            },
+            "fieldConfig": {
+              "defaults": { "unit": "short", "decimals": 0 },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "tokens-by-model": {
+      "kind": "Panel",
+      "spec": {
+        "id": 15,
+        "title": "Tokens by model ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap input_tokens [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "B",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap output_tokens [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "C",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cache_read_tokens [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "D",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap total_tokens [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "E",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "kind": "Transformation",
+                "group": "joinByField",
+                "spec": {
+                  "options": { "byField": "model", "mode": "outer" }
+                }
+              },
+              {
+                "kind": "Transformation",
+                "group": "organize",
+                "spec": {
+                  "options": {
+                    "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true },
+                    "renameByName": {
+                      "Value #A": "Input",
+                      "Value #B": "Output",
+                      "Value #C": "Cache read",
+                      "Value #D": "Total",
+                      "Value #E": "Cost",
+                      "model": "Model"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "Transformation",
+                "group": "sortBy",
+                "spec": {
+                  "options": { "fields": {}, "sort": [{ "field": "Cost", "desc": true }] }
+                }
+              }
+            ],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "table",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "showHeader": true,
+              "footer": { "show": true, "reducer": ["sum"], "fields": ["Input", "Output", "Cache read", "Total", "Cost"] }
+            },
+            "fieldConfig": {
+              "defaults": { "custom": { "align": "auto" } },
+              "overrides": [
+                { "matcher": { "id": "byName", "options": "Cost" }, "properties": [{ "id": "unit", "value": "currencyUSD" }, { "id": "decimals", "value": 2 }] },
+                { "matcher": { "id": "byName", "options": "Input" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "decimals", "value": 0 }] },
+                { "matcher": { "id": "byName", "options": "Output" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "decimals", "value": 0 }] },
+                { "matcher": { "id": "byName", "options": "Cache read" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "decimals", "value": 0 }] },
+                { "matcher": { "id": "byName", "options": "Total" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "decimals", "value": 0 }] }
+              ]
+            }
+          }
+        }
+      }
     }
   },
   "layout": {
@@ -836,7 +1117,10 @@
         { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 12, "width": 12, "height": 9,  "element": { "kind": "ElementReference", "name": "cost-by-model" } } },
         { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 21, "width": 12, "height": 7,  "element": { "kind": "ElementReference", "name": "cache-share" } } },
         { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 21, "width": 12, "height": 7,  "element": { "kind": "ElementReference", "name": "ratio-out-in" } } },
-        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 28, "width": 24, "height": 10, "element": { "kind": "ElementReference", "name": "users-table" } } }
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 28, "width": 24, "height": 10, "element": { "kind": "ElementReference", "name": "users-table" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 38, "width": 12, "height": 9,  "element": { "kind": "ElementReference", "name": "cost-by-model-time" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 38, "width": 12, "height": 9,  "element": { "kind": "ElementReference", "name": "events-by-model" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 47, "width": 24, "height": 10, "element": { "kind": "ElementReference", "name": "tokens-by-model" } } }
       ]
     }
   },
