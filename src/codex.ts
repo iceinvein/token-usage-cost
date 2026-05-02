@@ -29,7 +29,11 @@ export function parseCodexThreads(
   statePath: string,
   pricingTable: Map<string, ModelPricing>,
 ): UsageEvent[] {
-  const db = new Database(statePath, { readonly: true });
+  // URI mode with immutable=1: codex keeps state_5.sqlite in WAL mode, and a
+  // plain readonly open fails with SQLITE_CANTOPEN because SQLite cannot create
+  // the -shm file. immutable=1 tells SQLite to treat the file as a static
+  // snapshot and skip WAL recovery entirely.
+  const db = new Database(`file:${statePath}?immutable=1`, { readonly: true });
 
   try {
     const rows = db
