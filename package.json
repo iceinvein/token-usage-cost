@@ -1,8 +1,27 @@
 {
   "name": "claude-cost",
   "version": "0.1.0",
-  "description": "Local AI coding usage and estimated cost tracker",
+  "description": "Local AI coding usage and estimated cost tracker for Claude, Codex, and Cursor",
   "type": "module",
+  "bin": {
+    "claude-cost": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iceinvein/token-usage-cost.git"
+  },
+  "homepage": "https://github.com/iceinvein/token-usage-cost#readme",
+  "bugs": {
+    "url": "https://github.com/iceinvein/token-usage-cost/issues"
+  },
   "scripts": {
     "dev": "bun run src/cli.ts",
     "sync": "bun run src/cli.ts sync",
@@ -19,16 +38,28 @@
     "loki:push": "bun run src/cli.ts loki-push",
     "loki:delete": "bun run src/cli.ts loki-delete",
     "loki:reset": "bun run src/cli.ts loki-reset-sync",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "build:darwin-arm64": "bun build src/cli.ts --compile --target=bun-darwin-arm64 --outfile dist/claude-cost-darwin-arm64",
+    "build:darwin-x64": "bun build src/cli.ts --compile --target=bun-darwin-x64 --outfile dist/claude-cost-darwin-x64",
+    "build:linux-x64": "bun build src/cli.ts --compile --target=bun-linux-x64 --outfile dist/claude-cost-linux-x64",
+    "build:linux-arm64": "bun build src/cli.ts --compile --target=bun-linux-arm64 --outfile dist/claude-cost-linux-arm64",
+    "build:windows-x64": "bun build src/cli.ts --compile --target=bun-windows-x64 --outfile dist/claude-cost-windows-x64.exe",
+    "build:all": "bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:windows-x64",
+    "release": "bun run scripts/release.ts",
+    "prepublishOnly": "bun run check"
   },
   "keywords": [
     "bun",
     "cli",
     "tokens",
-    "cost-tracking"
+    "cost-tracking",
+    "claude",
+    "codex",
+    "cursor",
+    "ai-usage"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "commander": "^14.0.1",
     "ink": "^7.0.0",
@@ -37,6 +68,8 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
-    "typescript": "^6.0.2"
+    "react-devtools-core": "^7.0.1",
+    "typescript": "^6.0.2",
+    "ws": "^8.20.0"
   }
 }
