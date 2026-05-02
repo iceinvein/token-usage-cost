@@ -96,9 +96,11 @@ function isoToNanos(timestamp: string): string {
   return (BigInt(ms) * 1_000_000n).toString();
 }
 
+type LokiEntry = [string, string] | [string, string, Record<string, string>];
+
 type LokiStream = {
   stream: Record<string, string>;
-  values: Array<[string, string]>;
+  values: LokiEntry[];
 };
 
 export function buildPushPayload(events: UsageEvent[], config: LokiConfig): { streams: LokiStream[] } {
@@ -136,7 +138,13 @@ export function buildPushPayload(events: UsageEvent[], config: LokiConfig): { st
       ts: event.timestamp,
     });
 
-    stream.values.push([isoToNanos(event.timestamp), line]);
+    const metadata: Record<string, string> = {
+      model: event.model,
+      speed: event.speed,
+      user: config.user,
+    };
+
+    stream.values.push([isoToNanos(event.timestamp), line, metadata]);
   }
 
   return { streams: [...grouped.values()] };
