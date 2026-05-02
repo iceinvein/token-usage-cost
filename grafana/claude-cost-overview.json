@@ -1,0 +1,970 @@
+{
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "query": {
+          "datasource": { "name": "-- Grafana --" },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
+      }
+    }
+  ],
+  "cursorSync": "Off",
+  "description": "Team overview of Claude / Codex / Cursor usage and cost shipped from the claude-cost CLI.",
+  "editable": true,
+  "elements": {
+    "cost-total": {
+      "kind": "Panel",
+      "spec": {
+        "id": 1,
+        "title": "Total cost ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "stat",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto",
+              "graphMode": "area",
+              "colorMode": "value",
+              "justifyMode": "auto"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "currencyUSD",
+                "decimals": 2,
+                "color": { "mode": "thresholds" },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "value": 0, "color": "green" },
+                    { "value": 100, "color": "yellow" },
+                    { "value": 500, "color": "red" }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "events-total": {
+      "kind": "Panel",
+      "spec": {
+        "id": 2,
+        "title": "Events ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(count_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"}[$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "stat",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto",
+              "graphMode": "area",
+              "colorMode": "value",
+              "justifyMode": "auto"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "decimals": 0,
+                "color": { "mode": "fixed", "fixedColor": "blue" }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "users-distinct": {
+      "kind": "Panel",
+      "spec": {
+        "id": 3,
+        "title": "Distinct users ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "count(sum by (user) (count_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json [$range])))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "stat",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto",
+              "graphMode": "none",
+              "colorMode": "value",
+              "justifyMode": "auto"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "decimals": 0,
+                "color": { "mode": "fixed", "fixedColor": "purple" }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "models-distinct": {
+      "kind": "Panel",
+      "spec": {
+        "id": 4,
+        "title": "Distinct models ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "count(sum by (model) (count_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json [$range])))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "stat",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+              "textMode": "auto",
+              "graphMode": "none",
+              "colorMode": "value",
+              "justifyMode": "auto"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "decimals": 0,
+                "color": { "mode": "fixed", "fixedColor": "orange" }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "cost-by-tool": {
+      "kind": "Panel",
+      "spec": {
+        "id": 5,
+        "title": "Daily cost (stacked by tool)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (tool) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [1d]))",
+                      "queryType": "range",
+                      "legendFormat": "{{tool}}"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "timeseries",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "tooltip": { "mode": "multi", "sort": "desc" },
+              "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": [] }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "currencyUSD",
+                "decimals": 2,
+                "custom": {
+                  "drawStyle": "bars",
+                  "lineWidth": 1,
+                  "fillOpacity": 80,
+                  "stacking": { "mode": "normal", "group": "A" },
+                  "axisPlacement": "auto"
+                }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "tokens-stacked": {
+      "kind": "Panel",
+      "spec": {
+        "id": 6,
+        "title": "Daily tokens (stacked by type)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap input_tokens [1d]))",
+                      "queryType": "range",
+                      "legendFormat": "input"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "B",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap output_tokens [1d]))",
+                      "queryType": "range",
+                      "legendFormat": "output"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "C",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cache_read_tokens [1d]))",
+                      "queryType": "range",
+                      "legendFormat": "cache_read"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "D",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cache_write_tokens [1d]))",
+                      "queryType": "range",
+                      "legendFormat": "cache_write"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "timeseries",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "tooltip": { "mode": "multi", "sort": "desc" },
+              "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": [] }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "decimals": 0,
+                "custom": {
+                  "drawStyle": "bars",
+                  "lineWidth": 1,
+                  "fillOpacity": 80,
+                  "stacking": { "mode": "normal", "group": "A" }
+                }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "users-top": {
+      "kind": "Panel",
+      "spec": {
+        "id": 7,
+        "title": "Top users by cost ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "topk(20, sum by (user) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$range])))",
+                      "queryType": "instant",
+                      "legendFormat": "{{user}}"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "barchart",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "orientation": "horizontal",
+              "showValue": "auto",
+              "stacking": "none",
+              "tooltip": { "mode": "single" },
+              "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom" }
+            },
+            "fieldConfig": {
+              "defaults": { "unit": "currencyUSD", "decimals": 2 },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "cost-by-model": {
+      "kind": "Panel",
+      "spec": {
+        "id": 8,
+        "title": "Cost by model ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$range]))",
+                      "queryType": "range",
+                      "legendFormat": "{{model}}"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "kind": "Transformation",
+                "group": "reduce",
+                "version": "v0",
+                "spec": {
+                  "id": "reduce",
+                  "options": {
+                    "reducers": ["sum"],
+                    "mode": "seriesToRows"
+                  }
+                }
+              }
+            ],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "piechart",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "pieType": "donut",
+              "displayLabels": ["name", "percent"],
+              "legend": { "showLegend": true, "displayMode": "list", "placement": "right", "values": ["percent"] },
+              "tooltip": { "mode": "single" },
+              "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true }
+            },
+            "fieldConfig": {
+              "defaults": { "unit": "currencyUSD", "decimals": 2 },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "cache-share": {
+      "kind": "Panel",
+      "spec": {
+        "id": 10,
+        "title": "Cache read share of total tokens",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cache_read_tokens [1h])) / sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap total_tokens [1h]))",
+                      "queryType": "range",
+                      "legendFormat": "cache_read_ratio"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "timeseries",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "tooltip": { "mode": "single" },
+              "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom" }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 2,
+                "min": 0,
+                "max": 1,
+                "custom": {
+                  "drawStyle": "line",
+                  "lineWidth": 2,
+                  "fillOpacity": 10,
+                  "spanNulls": true
+                }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "ratio-out-in": {
+      "kind": "Panel",
+      "spec": {
+        "id": 11,
+        "title": "Output / input token ratio by model",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap output_tokens [1h])) / sum by (model) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap input_tokens [1h]))",
+                      "queryType": "range",
+                      "legendFormat": "{{model}}"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "timeseries",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "tooltip": { "mode": "multi", "sort": "desc" },
+              "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "decimals": 2,
+                "custom": {
+                  "drawStyle": "line",
+                  "lineWidth": 2,
+                  "fillOpacity": 5,
+                  "spanNulls": true
+                }
+              },
+              "overrides": []
+            }
+          }
+        }
+      }
+    },
+    "users-table": {
+      "kind": "Panel",
+      "spec": {
+        "id": 12,
+        "title": "Users ($range)",
+        "description": "",
+        "transparent": false,
+        "links": [],
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "A",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (user) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "B",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (user) (count_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "refId": "C",
+                  "hidden": false,
+                  "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                  "query": {
+                    "kind": "DataQuery",
+                    "group": "loki",
+                    "version": "v0",
+                    "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
+                    "spec": {
+                      "expr": "sum by (user) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap total_tokens [$range]))",
+                      "queryType": "instant"
+                    }
+                  }
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "kind": "Transformation",
+                "group": "joinByField",
+                "spec": {
+                  "options": { "byField": "user", "mode": "outer" }
+                }
+              },
+              {
+                "kind": "Transformation",
+                "group": "organize",
+                "spec": {
+                  "options": {
+                    "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true },
+                    "renameByName": {
+                      "Value #A": "Cost",
+                      "Value #B": "Events",
+                      "Value #C": "Tokens",
+                      "user": "User"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "Transformation",
+                "group": "sortBy",
+                "spec": {
+                  "options": { "fields": {}, "sort": [{ "field": "Cost", "desc": true }] }
+                }
+              }
+            ],
+            "queryOptions": {}
+          }
+        },
+        "vizConfig": {
+          "kind": "VizConfig",
+          "group": "table",
+          "version": "12.0.0",
+          "spec": {
+            "options": {
+              "showHeader": true,
+              "footer": { "show": true, "reducer": ["sum"], "fields": ["Cost", "Events", "Tokens"] }
+            },
+            "fieldConfig": {
+              "defaults": { "custom": { "align": "auto" } },
+              "overrides": [
+                { "matcher": { "id": "byName", "options": "Cost" }, "properties": [{ "id": "unit", "value": "currencyUSD" }, { "id": "decimals", "value": 2 }] },
+                { "matcher": { "id": "byName", "options": "Events" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "decimals", "value": 0 }] },
+                { "matcher": { "id": "byName", "options": "Tokens" }, "properties": [{ "id": "unit", "value": "short" }, { "id": "decimals", "value": 0 }] }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": [
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 0,  "width": 6,  "height": 4,  "element": { "kind": "ElementReference", "name": "cost-total" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 6,  "y": 0,  "width": 6,  "height": 4,  "element": { "kind": "ElementReference", "name": "events-total" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 0,  "width": 6,  "height": 4,  "element": { "kind": "ElementReference", "name": "users-distinct" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 18, "y": 0,  "width": 6,  "height": 4,  "element": { "kind": "ElementReference", "name": "models-distinct" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 4,  "width": 12, "height": 8,  "element": { "kind": "ElementReference", "name": "cost-by-tool" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 4,  "width": 12, "height": 8,  "element": { "kind": "ElementReference", "name": "tokens-stacked" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 12, "width": 12, "height": 9,  "element": { "kind": "ElementReference", "name": "users-top" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 12, "width": 12, "height": 9,  "element": { "kind": "ElementReference", "name": "cost-by-model" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 21, "width": 12, "height": 7,  "element": { "kind": "ElementReference", "name": "cache-share" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 21, "width": 12, "height": 7,  "element": { "kind": "ElementReference", "name": "ratio-out-in" } } },
+        { "kind": "GridLayoutItem", "spec": { "x": 0,  "y": 28, "width": 24, "height": 10, "element": { "kind": "ElementReference", "name": "users-table" } } }
+      ]
+    }
+  },
+  "links": [],
+  "liveNow": false,
+  "preferences": {
+    "layout": {
+      "kind": "GridLayout",
+      "spec": { "items": [] }
+    }
+  },
+  "preload": false,
+  "tags": ["claude-cost", "ai-usage"],
+  "timeSettings": {
+    "autoRefresh": "30s",
+    "autoRefreshIntervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+    "fiscalYearStartMonth": 0,
+    "from": "now-7d",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
+  },
+  "title": "Claude Cost - Team Overview",
+  "variables": [
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "name": "team",
+        "label": "Team",
+        "definition": "label_values({service=\"claude-cost\"}, team)",
+        "query": {
+          "kind": "DataQuery",
+          "group": "loki",
+          "version": "v0",
+          "datasource": { "name": "bfkq4060elfk0a" },
+          "spec": {
+            "__legacyStringValue": "label_values({service=\"claude-cost\"}, team)"
+          }
+        },
+        "current": { "text": "", "value": "" },
+        "options": [],
+        "refresh": "onDashboardLoad",
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc",
+        "hide": "dontHide",
+        "multi": false,
+        "includeAll": false,
+        "allValue": "",
+        "allowCustomValue": false
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "name": "env",
+        "label": "Env",
+        "definition": "label_values({service=\"claude-cost\", team=\"$team\"}, env)",
+        "query": {
+          "kind": "DataQuery",
+          "group": "loki",
+          "version": "v0",
+          "datasource": { "name": "bfkq4060elfk0a" },
+          "spec": {
+            "__legacyStringValue": "label_values({service=\"claude-cost\", team=\"$team\"}, env)"
+          }
+        },
+        "current": { "text": "", "value": "" },
+        "options": [],
+        "refresh": "onDashboardLoad",
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc",
+        "hide": "dontHide",
+        "multi": false,
+        "includeAll": false,
+        "allValue": "",
+        "allowCustomValue": false
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "name": "tool",
+        "label": "Tool",
+        "definition": "label_values({service=\"claude-cost\", team=\"$team\", env=\"$env\"}, tool)",
+        "query": {
+          "kind": "DataQuery",
+          "group": "loki",
+          "version": "v0",
+          "datasource": { "name": "bfkq4060elfk0a" },
+          "spec": {
+            "__legacyStringValue": "label_values({service=\"claude-cost\", team=\"$team\", env=\"$env\"}, tool)"
+          }
+        },
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "options": [],
+        "refresh": "onDashboardLoad",
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc",
+        "hide": "dontHide",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "allowCustomValue": false
+      }
+    },
+    {
+      "kind": "CustomVariable",
+      "spec": {
+        "name": "range",
+        "label": "Range",
+        "query": "1h,24h,7d,30d",
+        "current": { "text": "7d", "value": "7d" },
+        "options": [
+          { "text": "1h", "value": "1h", "selected": false },
+          { "text": "24h", "value": "24h", "selected": false },
+          { "text": "7d", "value": "7d", "selected": true },
+          { "text": "30d", "value": "30d", "selected": false }
+        ],
+        "multi": false,
+        "includeAll": false,
+        "skipUrlSync": false,
+        "hide": "dontHide",
+        "allValue": "",
+        "allowCustomValue": false
+      }
+    }
+  ]
+}
