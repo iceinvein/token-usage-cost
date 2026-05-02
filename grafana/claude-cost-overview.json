@@ -290,7 +290,7 @@
                     "version": "v0",
                     "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
                     "spec": {
-                      "expr": "sum by (tool) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [1d]))",
+                      "expr": "sum by (tool) (sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap cost_usd [$__interval]))",
                       "queryType": "range",
                       "legendFormat": "{{tool}}"
                     }
@@ -353,7 +353,7 @@
                     "version": "v0",
                     "datasource": { "type": "loki", "uid": "bfkq4060elfk0a" },
                     "spec": {
-                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap input_tokens [1d]))",
+                      "expr": "sum(sum_over_time({service=\"claude-cost\", team=\"$team\", env=\"$env\", tool=~\"$tool\"} | json | unwrap input_tokens [$__interval]))",
                       "queryType": "range",
                       "legendFormat": "input"
                     }
