@@ -14,6 +14,7 @@ import {
   loadClaudeFiveHourEstimate,
   loadClaudeFiveHourHistory,
   loadDashboardData,
+  todayInLocalTimezone,
   type DashboardData,
   type DashboardSourceFilter,
 } from "./dashboard-data";
@@ -428,6 +429,7 @@ const OverviewTab = memo(function OverviewTab(props: {
   monthModels: DashboardMonthModels;
   claudeUsage: ClaudeUsageSnapshot | null;
   claudeUsageRefreshing: boolean;
+  claudeUsageError: string | null;
   claudeFiveHourEstimate: ClaudeFiveHourEstimate | null;
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
   claudeWeeklyEstimate: DashboardClaudeWeeklyEstimate;
@@ -564,6 +566,11 @@ const OverviewTab = memo(function OverviewTab(props: {
           ) : (
             <Text dimColor>{props.claudeUsageRefreshing ? "Refreshing Claude usage in background..." : "Loading Claude usage..."}</Text>
           )}
+          {props.claudeUsageError ? (
+            <Box marginTop={1}>
+              <Text color="red">{`Claude usage refresh failed: ${props.claudeUsageError}`}</Text>
+            </Box>
+          ) : null}
         </Section>
       ) : null}
 
@@ -571,7 +578,8 @@ const OverviewTab = memo(function OverviewTab(props: {
         && (props.claudeFiveHourEstimate || props.claudeWeeklyEstimate || props.claudeMonthEstimate) ? (
         <Section title="Claude Capacity Estimates" color="green">
           <PeakHourIndicator status={props.peakHourStatus} />
-          {props.claudeFiveHourEstimate ? (
+          {props.claudeFiveHourEstimate
+            && Date.parse(props.claudeFiveHourEstimate.resetAt) > Date.now() ? (
             <Box marginTop={1} flexDirection="column" width="100%">
               <EstimateCard estimate={props.claudeFiveHourEstimate} />
             </Box>
@@ -914,9 +922,11 @@ export function DashboardApp(props: DashboardAppProps) {
   const [refreshedAt, setRefreshedAt] = useState<string>("");
   const [claudeUsage, setClaudeUsage] = useState<ClaudeUsageSnapshot | null>(null);
   const [claudeUsageRefreshing, setClaudeUsageRefreshing] = useState(false);
+  const [claudeUsageError, setClaudeUsageError] = useState<string | null>(null);
   const [claudeFiveHourEstimate, setClaudeFiveHourEstimate] = useState<ClaudeFiveHourEstimate | null>(null);
   const [claudeFiveHourHistory, setClaudeFiveHourHistory] = useState<ClaudeFiveHourEstimateHistory>([]);
   const [peakHourStatus, setPeakHourStatus] = useState<PeakHourStatus>(() => getPeakHourStatus());
+  const [currentDate, setCurrentDate] = useState<string>(props.date);
   const dataSignatureRef = useRef<string>("");
   const claudeUsageSignatureRef = useRef<string>("");
   const lastClaudeUsageRefreshMsRef = useRef<number>(0);
@@ -960,7 +970,7 @@ export function DashboardApp(props: DashboardAppProps) {
         root: props.root,
         dbPath: props.dbPath,
         codexStatePath: props.codexStatePath,
-        date: props.date,
+        date: currentDate,
         sync: props.sync,
         source: props.source,
       });
@@ -1010,6 +1020,11 @@ export function DashboardApp(props: DashboardAppProps) {
         claudeUsageSignatureRef.current = nextSignature;
         setClaudeUsage(nextUsage);
       }
+      setClaudeUsageError(null);
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : String(nextError);
+      setClaudeUsageError(message);
+      lastClaudeUsageRefreshMsRef.current = Date.now();
     } finally {
       claudeUsageLoadingRef.current = false;
       setClaudeUsageRefreshing(false);
@@ -1037,7 +1052,20 @@ export function DashboardApp(props: DashboardAppProps) {
 
   useEffect(() => {
     void refresh();
-  }, [props.root, props.dbPath, props.codexStatePath, props.date, props.sync, props.source]);
+  }, [props.root, props.dbPath, props.codexStatePath, currentDate, props.sync, props.source]);
+
+  useEffect(() => {
+    setCurrentDate(props.date);
+    const autoToday = todayInLocalTimezone();
+    if (props.date !== autoToday) {
+      return;
+    }
+    const timer = setInterval(() => {
+      const next = todayInLocalTimezone();
+      setCurrentDate((prev) => (prev === next ? prev : next));
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [props.date]);
 
   useEffect(() => {
     if (props.source !== "all" && props.source !== "claude-code") {
@@ -1077,12 +1105,12 @@ export function DashboardApp(props: DashboardAppProps) {
     return () => {
       clearInterval(timer);
     };
-  }, [props.watch, props.intervalSeconds, props.root, props.dbPath, props.codexStatePath, props.date, props.sync, props.source]);
+  }, [props.watch, props.intervalSeconds, props.root, props.dbPath, props.codexStatePath, currentDate, props.sync, props.source]);
 
   return (
     <Box flexDirection="column" paddingX={1}>
       <DashboardHeader
-        date={props.date}
+        date={currentDate}
         source={props.source}
         watch={props.watch}
         intervalSeconds={props.intervalSeconds}
@@ -1115,6 +1143,7 @@ export function DashboardApp(props: DashboardAppProps) {
               monthModels={data.monthModels}
               claudeUsage={claudeUsage}
               claudeUsageRefreshing={claudeUsageRefreshing}
+              claudeUsageError={claudeUsageError}
               claudeFiveHourEstimate={claudeFiveHourEstimate}
               claudeFiveHourHistory={claudeFiveHourHistory}
               claudeWeeklyEstimate={data.claudeWeeklyEstimate}

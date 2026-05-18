@@ -158,10 +158,13 @@ function buildClaudeWindowEstimate(
   }
 
   const windowStartAt = windowStartAtForSample(latestSample);
+  const nowIso = new Date().toISOString();
+  const windowClosed = latestSample.resetAt <= nowIso;
+  const upperBound = windowClosed ? latestSample.resetAt : nowIso;
   const observedEvents = events.filter((event) =>
     event.source === "claude-code"
     && event.timestamp >= windowStartAt
-    && event.timestamp <= latestSample.fetchedAt,
+    && event.timestamp <= upperBound,
   );
   const observedTokens = observedEvents.reduce((sum, event) => sum + event.totalTokens, 0);
   const observedCostUsd = observedEvents.reduce((sum, event) => sum + event.estimatedCostUsd, 0);
@@ -171,8 +174,12 @@ function buildClaudeWindowEstimate(
     return null;
   }
 
-  const estimatedFullWindowTokens = Math.round((observedTokens / latestSample.percentUsed) * 100);
-  const estimatedFullWindowCostUsd = observedCostUsd / latestSample.percentUsed * 100;
+  const estimatedFullWindowTokens = windowClosed
+    ? observedTokens
+    : Math.round((observedTokens / latestSample.percentUsed) * 100);
+  const estimatedFullWindowCostUsd = windowClosed
+    ? observedCostUsd
+    : (observedCostUsd / latestSample.percentUsed) * 100;
   const estimatedRemainingTokens = Math.max(0, estimatedFullWindowTokens - observedTokens);
   const estimatedRemainingCostUsd = Math.max(0, estimatedFullWindowCostUsd - observedCostUsd);
 
