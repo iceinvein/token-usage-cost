@@ -18,7 +18,6 @@ import {
   type DashboardData,
   type DashboardSourceFilter,
 } from "./dashboard-data";
-import { getPeakHourStatus, type PeakHourStatus } from "./peak-hours";
 import type { ClaudeFiveHourEstimate, ClaudeFiveHourEstimateHistory } from "./types";
 
 type DashboardAppProps = {
@@ -358,23 +357,6 @@ function buildDashboardDataSignature(data: DashboardData): string {
   return JSON.stringify(data);
 }
 
-function PeakHourIndicator(props: { status: PeakHourStatus }) {
-  if (props.status.active) {
-    return (
-      <Box>
-        <Text bold color="yellow">{`● PEAK `}</Text>
-        <Text color="gray">{`${props.status.startLocal}-${props.status.endLocal} local`}</Text>
-      </Box>
-    );
-  }
-
-  return (
-    <Box>
-      <Text dimColor>{`○ off-peak  next ${props.status.nextStartLocal} local`}</Text>
-    </Box>
-  );
-}
-
 const DashboardHeader = memo(function DashboardHeader(props: {
   date: string;
   source: DashboardSourceFilter;
@@ -435,7 +417,6 @@ const OverviewTab = memo(function OverviewTab(props: {
   claudeFiveHourHistory: ClaudeFiveHourEstimateHistory;
   claudeWeeklyEstimate: DashboardClaudeWeeklyEstimate;
   claudeMonthEstimate: DashboardClaudeMonthEstimate;
-  peakHourStatus: PeakHourStatus;
 }) {
   const sourceRows = DASHBOARD_SOURCES.map((source) => {
     const today = props.today.bySource.find((row) => row.source === source);
@@ -578,7 +559,6 @@ const OverviewTab = memo(function OverviewTab(props: {
       {(props.source === "all" || props.source === "claude-code")
         && (props.claudeFiveHourEstimate || props.claudeWeeklyEstimate || props.claudeMonthEstimate) ? (
         <Section title="Claude Capacity Estimates" color="green">
-          <PeakHourIndicator status={props.peakHourStatus} />
           {props.claudeFiveHourEstimate
             && Date.parse(props.claudeFiveHourEstimate.resetAt) > Date.now() ? (
             <Box marginTop={1} flexDirection="column" width="100%">
@@ -926,7 +906,6 @@ export function DashboardApp(props: DashboardAppProps) {
   const [claudeUsageError, setClaudeUsageError] = useState<string | null>(null);
   const [claudeFiveHourEstimate, setClaudeFiveHourEstimate] = useState<ClaudeFiveHourEstimate | null>(null);
   const [claudeFiveHourHistory, setClaudeFiveHourHistory] = useState<ClaudeFiveHourEstimateHistory>([]);
-  const [peakHourStatus, setPeakHourStatus] = useState<PeakHourStatus>(() => getPeakHourStatus());
   const [currentDate, setCurrentDate] = useState<string>(() => resolveDashboardDate(props.date, props.autoDate));
   const dataSignatureRef = useRef<string>("");
   const claudeUsageSignatureRef = useRef<string>("");
@@ -1087,13 +1066,6 @@ export function DashboardApp(props: DashboardAppProps) {
   }, [props.source]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setPeakHourStatus(getPeakHourStatus());
-    }, 60_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     if (!props.watch) {
       return;
     }
@@ -1148,7 +1120,6 @@ export function DashboardApp(props: DashboardAppProps) {
               claudeFiveHourHistory={claudeFiveHourHistory}
               claudeWeeklyEstimate={data.claudeWeeklyEstimate}
               claudeMonthEstimate={data.claudeMonthEstimate}
-              peakHourStatus={peakHourStatus}
             />
           ) : null}
           {tab === "trend" ? (
