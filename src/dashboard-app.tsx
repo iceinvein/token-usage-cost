@@ -14,7 +14,7 @@ import {
   loadClaudeFiveHourEstimate,
   loadClaudeFiveHourHistory,
   loadDashboardData,
-  todayInLocalTimezone,
+  resolveDashboardDate,
   type DashboardData,
   type DashboardSourceFilter,
 } from "./dashboard-data";
@@ -26,6 +26,7 @@ type DashboardAppProps = {
   dbPath: string;
   codexStatePath: string;
   date: string;
+  autoDate: boolean;
   sync: boolean;
   watch: boolean;
   intervalSeconds: number;
@@ -926,7 +927,7 @@ export function DashboardApp(props: DashboardAppProps) {
   const [claudeFiveHourEstimate, setClaudeFiveHourEstimate] = useState<ClaudeFiveHourEstimate | null>(null);
   const [claudeFiveHourHistory, setClaudeFiveHourHistory] = useState<ClaudeFiveHourEstimateHistory>([]);
   const [peakHourStatus, setPeakHourStatus] = useState<PeakHourStatus>(() => getPeakHourStatus());
-  const [currentDate, setCurrentDate] = useState<string>(props.date);
+  const [currentDate, setCurrentDate] = useState<string>(() => resolveDashboardDate(props.date, props.autoDate));
   const dataSignatureRef = useRef<string>("");
   const claudeUsageSignatureRef = useRef<string>("");
   const lastClaudeUsageRefreshMsRef = useRef<number>(0);
@@ -1055,17 +1056,16 @@ export function DashboardApp(props: DashboardAppProps) {
   }, [props.root, props.dbPath, props.codexStatePath, currentDate, props.sync, props.source]);
 
   useEffect(() => {
-    setCurrentDate(props.date);
-    const autoToday = todayInLocalTimezone();
-    if (props.date !== autoToday) {
+    setCurrentDate(resolveDashboardDate(props.date, props.autoDate));
+    if (!props.autoDate) {
       return;
     }
     const timer = setInterval(() => {
-      const next = todayInLocalTimezone();
+      const next = resolveDashboardDate(props.date, true);
       setCurrentDate((prev) => (prev === next ? prev : next));
     }, 60_000);
     return () => clearInterval(timer);
-  }, [props.date]);
+  }, [props.date, props.autoDate]);
 
   useEffect(() => {
     if (props.source !== "all" && props.source !== "claude-code") {

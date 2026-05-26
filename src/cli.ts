@@ -12,6 +12,7 @@ import {
   formatLocalTimestamp,
   loadDashboardData,
   monthStart,
+  resolveDashboardDate,
   todayInLocalTimezone,
   type DashboardSourceFilter,
 } from "./dashboard-data";
@@ -507,13 +508,14 @@ program
       interval: string;
       source: string;
       sync: boolean;
-    }) => {
+    }, command: Command) => {
       if (!DASHBOARD_SOURCE_OPTIONS.includes(source as DashboardSourceFilter)) {
         throw new Error(`Invalid dashboard source filter: ${source}`);
       }
 
       const sourceFilter = source as DashboardSourceFilter;
       const usePlain = plain || !process.stdin.isTTY || !process.stdout.isTTY;
+      const autoDate = command.getOptionValueSource("date") === "default";
 
       if (!usePlain) {
         render(
@@ -522,6 +524,7 @@ program
             dbPath,
             codexStatePath: codexState,
             date,
+            autoDate,
             sync,
             watch,
             intervalSeconds: Math.max(1, Number(interval)),
@@ -536,11 +539,12 @@ program
       }
 
       const drawPlain = async () => {
+        const requestedDate = resolveDashboardDate(date, autoDate);
         const { monthBegin, date: dashboardDate } = await loadDashboardData({
           root,
           dbPath,
           codexStatePath: codexState,
-          date,
+          date: requestedDate,
           sync,
           source: sourceFilter,
         });
@@ -560,7 +564,7 @@ program
 
         console.log(`Database: ${dbPath}`);
         console.log(`Refreshed: ${formatLocalTimestamp()}`);
-        process.stdout.write(renderDashboard(events, pricing, date, sourceFilter));
+        process.stdout.write(renderDashboard(events, pricing, dashboardDate, sourceFilter));
       };
 
       await drawPlain();

@@ -45,12 +45,19 @@ export function formatMonthLabel(monthStartDate: string): string {
   return MONTH_LABEL_FORMATTER.format(new Date(`${monthStartDate}T00:00:00Z`));
 }
 
-export function todayInLocalTimezone(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
+function localDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+export function todayInLocalTimezone(): string {
+  return localDateString(new Date());
+}
+
+export function resolveDashboardDate(configuredDate: string, autoDate: boolean, now = new Date()): string {
+  return autoDate ? localDateString(now) : configuredDate;
 }
 
 export function formatLocalTimestamp(date = new Date()): string {
@@ -149,7 +156,7 @@ function buildClaudeWindowEstimate(
   windowStartAtForSample: (sample: ClaudeUsageSample) => string,
 ): ClaudeWindowCapacityEstimate | null {
   const latestSample = [...samples]
-    .filter((sample) => sample.windowKind === windowKind && sample.resetAt && sample.percentUsed > 0)
+    .filter((sample) => sample.windowKind === windowKind && sample.percentUsed > 0)
     .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))
     .at(-1);
 
@@ -219,11 +226,16 @@ function buildClaudeFiveHourEstimate(
   };
 }
 
-function buildClaudeWeeklyEstimate(
+export function buildClaudeWeeklyEstimate(
   samples: ClaudeUsageSample[],
   events: ReturnType<typeof readEventsForRange>,
 ): ClaudeWindowCapacityEstimate | null {
-  return buildClaudeWindowEstimate(samples, events, "weeklyAllModels", (sample) => subtractDays(sample.resetAt!, 7));
+  const estimate = buildClaudeWindowEstimate(samples, events, "weeklyAllModels", (sample) => subtractDays(sample.resetAt!, 7));
+  if (!estimate || estimate.resetAt <= new Date().toISOString()) {
+    return null;
+  }
+
+  return estimate;
 }
 
 function buildClaudeMonthEstimate(
@@ -275,6 +287,12 @@ function buildClaudeFiveHourEstimateHistory(
   events: ReturnType<typeof readEventsForRange>,
   limit = 6,
 ): ClaudeFiveHourEstimateHistory {
+  return claudeFiveHourHistorySamples(samples, limit)
+    .map((sample) => buildClaudeFiveHourEstimate([sample], events))
+    .filter((estimate): estimate is ClaudeFiveHourEstimate => estimate !== null);
+}
+
+function claudeFiveHourHistorySamples(samples: ClaudeUsageSample[], limit = 6): ClaudeUsageSample[] {
   const latestSamplesByReset = new Map<string, ClaudeUsageSample>();
 
   for (const sample of samples
@@ -286,9 +304,16 @@ function buildClaudeFiveHourEstimateHistory(
 
   return [...latestSamplesByReset.values()]
     .sort((a, b) => b.resetAt!.localeCompare(a.resetAt!))
-    .slice(0, limit)
-    .map((sample) => buildClaudeFiveHourEstimate([sample], events))
-    .filter((estimate): estimate is ClaudeFiveHourEstimate => estimate !== null);
+    .slice(0, limit);
+}
+
+export function claudeFiveHourHistoryEventStart(samples: ClaudeUsageSample[], limit = 6): string | null {
+  const selected = claudeFiveHourHistorySamples(samples, limit);
+  const earliestResetAt = selected
+    .sort((a, b) => a.resetAt!.localeCompare(b.resetAt!))
+    .at(0)?.resetAt;
+
+  return earliestResetAt ? subtractHours(earliestResetAt, 5) : null;
 }
 
 export async function loadClaudeFiveHourEstimate(dbPath = defaultDatabasePath()): Promise<ClaudeFiveHourEstimate | null> {
@@ -432,7 +457,11 @@ export async function loadDashboardData(args: {
       });
     }
     const claudeUsageSamples = readClaudeUsageSamples(db);
-    const claudeFiveHourHistory = buildClaudeFiveHourEstimateHistory(claudeUsageSamples, estimateEvents);
+    const historyEventStart = claudeFiveHourHistoryEventStart(claudeUsageSamples);
+    const historyEvents = historyEventStart && historyEventStart < `${estimateStart}T00:00:00`
+      ? readEventsForRange(db, historyEventStart, `${endExclusive}T00:00:00`)
+      : estimateEvents;
+    const claudeFiveHourHistory = buildClaudeFiveHourEstimateHistory(claudeUsageSamples, historyEvents);
     const claudeWeeklyEstimate = buildClaudeWeeklyEstimate(claudeUsageSamples, estimateEvents);
 
     return {

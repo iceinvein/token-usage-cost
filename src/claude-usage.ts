@@ -86,6 +86,7 @@ function renderTerminalOutput(raw: string): string {
             case "B": row = Math.min(rows - 1, row + n); break;
             case "C": col = Math.min(cols - 1, col + n); break;
             case "D": col = Math.max(0, col - n); break;
+            case "G": col = Math.max(0, Math.min(cols - 1, n - 1)); break;
             case "H": case "f": {
               const parts = params.split(";");
               row = Math.max(0, Math.min(rows - 1, (Number.parseInt(parts[0]!, 10) || 1) - 1));
@@ -254,14 +255,12 @@ function parseResetAt(resetText: string | undefined, fetchedAt: string): string 
   return undefined;
 }
 
-function parseUsageLines(output: string): ClaudeUsageSnapshot {
+export function parseClaudeUsageOutput(output: string, fetchedAt = new Date().toISOString()): ClaudeUsageSnapshot {
   const cleaned = renderTerminalOutput(output);
   const lines = cleaned
     .split(/\r?\n/)
     .map(normalizeLine)
     .filter(Boolean);
-
-  const fetchedAt = new Date().toISOString();
 
   const errorLine = lines.find((line) => /failed to load usage data/i.test(line));
   if (errorLine) {
@@ -276,6 +275,19 @@ function parseUsageLines(output: string): ClaudeUsageSnapshot {
   const uniqueLines = [...new Set(lines)];
   const windows: ClaudeUsageWindow[] = [];
   const collapsed = uniqueLines.join("\n");
+  const upsertWindow = (nextWindow: ClaudeUsageWindow): void => {
+    const existing = windows.find((window) => window.id === nextWindow.id);
+    if (!existing) {
+      windows.push(nextWindow);
+      return;
+    }
+
+    existing.percentLeft = nextWindow.percentLeft;
+    existing.percentUsed = nextWindow.percentUsed;
+    existing.resetAt = existing.resetAt ?? nextWindow.resetAt;
+    existing.resetText = existing.resetText ?? nextWindow.resetText;
+    existing.detailText = nextWindow.detailText;
+  };
 
   const blockPatterns: Array<{ id: ClaudeUsageWindowId; pattern: RegExp }> = [
     {
@@ -301,7 +313,7 @@ function parseUsageLines(output: string): ClaudeUsageSnapshot {
     const percentLeft = Math.max(0, 100 - Number.parseInt(match[1]!, 10));
     const resetText = match[2] ? normalizeResetText(normalizeLine(match[2])) : undefined;
 
-    windows.push({
+    upsertWindow({
       id,
       label: labelForWindow(id),
       percentLeft,
@@ -312,41 +324,46 @@ function parseUsageLines(output: string): ClaudeUsageSnapshot {
     });
   }
 
-  if (windows.length === 0) {
-    for (let index = 0; index < uniqueLines.length; index += 1) {
-      const line = uniqueLines[index]!;
-      const id = inferWindowId(line);
-      if (!id) {
-        continue;
-      }
-
-      const detailLines = uniqueLines.slice(index + 1, index + 5);
-      const percentUsedLine = detailLines.find((candidate) => /\b\d{1,3}%\s*used\b/i.test(candidate));
-      const percentLeftLine = detailLines.find((candidate) => /\b\d{1,3}%\s+left\b/i.test(candidate));
-      const resetLine = detailLines.find((candidate) => /^rese\s*s?|^resets?/i.test(candidate));
-
-      const percentUsedMatch = percentUsedLine?.match(/(\d{1,3})%\s*used/i);
-      const percentLeftMatch = percentLeftLine?.match(/(\d{1,3})%\s+left/i);
-      const percentLeft = percentLeftMatch
-        ? Number.parseInt(percentLeftMatch[1]!, 10)
-        : percentUsedMatch
-          ? Math.max(0, 100 - Number.parseInt(percentUsedMatch[1]!, 10))
-          : undefined;
-
-      if (typeof percentLeft !== "number") {
-        continue;
-      }
-
-      windows.push({
-        id,
-        label: labelForWindow(id),
-        percentLeft,
-        percentUsed: 100 - percentLeft,
-        resetAt: parseResetAt(resetLine ? normalizeResetText(resetLine) : undefined, fetchedAt),
-        resetText: resetLine ? normalizeResetText(resetLine) : undefined,
-        detailText: percentUsedLine ?? percentLeftLine ?? line,
-      });
+  for (let index = 0; index < uniqueLines.length; index += 1) {
+    const line = uniqueLines[index]!;
+    const id = inferWindowId(line);
+    if (!id) {
+      continue;
     }
+
+    const detailLines = uniqueLines.slice(index + 1, index + 5);
+    const percentUsedLine = detailLines.find((candidate) => /\b\d{1,3}%\s*used\b/i.test(candidate));
+    const percentLeftLine = detailLines.find((candidate) => /\b\d{1,3}%\s+left\b/i.test(candidate));
+    const resetLine = detailLines.find((candidate) => /^rese\s*s?|^resets?/i.test(candidate));
+
+    const percentUsedMatch = percentUsedLine?.match(/(\d{1,3})%\s*used/i);
+    const percentLeftMatch = percentLeftLine?.match(/(\d{1,3})%\s+left/i);
+    const percentLeft = percentLeftMatch
+      ? Number.parseInt(percentLeftMatch[1]!, 10)
+      : percentUsedMatch
+        ? Math.max(0, 100 - Number.parseInt(percentUsedMatch[1]!, 10))
+        : undefined;
+
+    if (typeof percentLeft !== "number") {
+      continue;
+    }
+
+    const resetText = resetLine ? normalizeResetText(resetLine) : undefined;
+    const detailText = percentUsedMatch
+      ? `${100 - percentLeft}% used`
+      : percentLeftMatch
+        ? `${percentLeft}% left`
+        : line;
+
+    upsertWindow({
+      id,
+      label: labelForWindow(id),
+      percentLeft,
+      percentUsed: 100 - percentLeft,
+      resetAt: parseResetAt(resetText, fetchedAt),
+      resetText,
+      detailText,
+    });
   }
 
   if (windows.length > 0) {
@@ -452,7 +469,7 @@ export async function fetchClaudeUsageSnapshot(): Promise<ClaudeUsageSnapshot> {
   const combined = `${stdoutText}\n${stderrText}`.trim();
   const debugPath = join(dirname(defaultClaudeUsageSnapshotPath()), "claude-usage-raw.txt");
   await writeFile(debugPath, combined, "utf8");
-  const snapshot = parseUsageLines(combined);
+  const snapshot = parseClaudeUsageOutput(combined);
 
   if (snapshot.status !== "available" && exitCode !== 0 && !snapshot.message) {
     return {
